@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from datetime import datetime
 
 import sqlglot
@@ -31,9 +32,14 @@ def incomplete_tables(db: Database, hour: datetime, as_of: datetime) -> dict[str
     return {t: r for t, r in arrival_ratios(db, hour, as_of).items() if r < COMPLETE_RATIO}
 
 
-def source_tables(spec: MetricSpec) -> set[str]:
+def source_tables(spec: MetricSpec) -> frozenset[str]:
     """The arrival tables (`search_events`, `orders`, `ads`) a metric's SQL reads from."""
-    parsed = sqlglot.parse_one(f"SELECT {spec.sql}")
+    return _tables_of(spec.sql)
+
+
+@functools.cache
+def _tables_of(sql: str) -> frozenset[str]:
+    parsed = sqlglot.parse_one(f"SELECT {sql}")
     names = {t.name for t in parsed.find_all(exp.Table)}
     columns = {c.name for c in parsed.find_all(exp.Column)}
     found = {"ads"} if ADS_TABLE in names else set()
@@ -41,7 +47,7 @@ def source_tables(spec: MetricSpec) -> set[str]:
         found |= ({"search_events"} if columns & set(SEARCH_EVENT_COLUMNS) else set()) | (
             {"orders"} if columns & ORDER_COLUMNS else set()
         )
-    return found
+    return frozenset(found)
 
 
 def is_scorable(spec: MetricSpec, incomplete: dict[str, float]) -> bool:

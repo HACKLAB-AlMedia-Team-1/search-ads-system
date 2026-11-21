@@ -29,7 +29,7 @@ segment = {} if market == markets[0] else {"market": market}
 charts = dict(BUSINESS + SEARCH + EXPERIENCE)
 
 
-@st.fragment(run_every=2)
+@st.fragment(run_every=1)
 def live() -> None:
     open_incidents = rt.db.df(
         "SELECT incident_id, report_json FROM incidents WHERE status = 'open' ORDER BY incident_id DESC"

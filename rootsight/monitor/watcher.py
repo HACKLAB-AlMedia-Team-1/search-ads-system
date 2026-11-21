@@ -35,6 +35,8 @@ PERSISTENCE_BONUS = 0.5
 HISTORY_DAYS = 14
 REFRESH_HOURS = 3
 MAX_CASES_PER_TICK = 2
+CUBES = {"fact_hourly": ("market", "platform", "source"), "ads_hourly": ("market",)}
+ALL = "*"
 
 
 @dataclass
@@ -73,6 +75,60 @@ class Case:
     detail: dict = field(default_factory=dict)
 
 
+class TableHistory:
+    """Hourly values of every plain metric of one table, for every segment, kept in memory.
+
+    One `GROUP BY ts, CUBE(dims)` query per simulated hour refreshes all of them, instead of one query per
+    metric and segment. The latest hours are re-read each time in case late data was repaired.
+    """
+
+    def __init__(self, db: Database, table: str, dims: tuple[str, ...]):
+        self.db, self.table, self.dims = db, table, dims
+        self.aliases: dict[str, str] = {}
+        self.loaded: datetime | None = None
+        self._frame = pd.DataFrame()
+        self._groups: dict[tuple, pd.DataFrame] = {}
+
+    def refresh(self, exprs: dict[str, str], hour: datetime) -> None:
+        """Make sure the hours up to and including `hour` are loaded for the metrics in `exprs` (sql -> expression)."""
+        end = hour + HOUR
+        known = set(exprs) <= set(self.aliases)
+        if known and self.loaded is not None and self.loaded >= end:
+            return
+        full = self.loaded is None or not known
+        if full:
+            self.aliases = {sql: f"c{i}" for i, sql in enumerate(exprs)}
+            self._select = ", ".join(f"{expr} AS {self.aliases[sql]}" for sql, expr in exprs.items())
+        start = hour - timedelta(days=HISTORY_DAYS + 2) if full else self.loaded - HOUR * REFRESH_HOURS
+        dims = ", ".join(self.dims)
+        fresh = self.db.df(
+            f"SELECT ts, {dims}, {self._select} FROM {self.table} WHERE ts >= ? AND ts < ? "
+            f"GROUP BY ts, CUBE ({dims}) ORDER BY ts",
+            [start, end],
+        )
+        fresh[list(self.dims)] = fresh[list(self.dims)].fillna(ALL)
+        self._frame = (
+            fresh if full else pd.concat([self._frame[self._frame["ts"] < start], fresh], ignore_index=True)
+        )
+        grouped = self._frame.groupby(list(self.dims), sort=False)
+        self._groups = {k if isinstance(k, tuple) else (k,): g for k, g in grouped}
+        self.loaded = end
+
+    def series(self, sql: str, segment: dict[str, str]) -> pd.DataFrame:
+        """Hourly values (columns ts, value) of one metric in one segment."""
+        group = self._groups.get(tuple(segment.get(d, ALL) for d in self.dims))
+        if group is None:
+            return pd.DataFrame(
+                {"ts": pd.Series(dtype="datetime64[us]"), "value": pd.Series(dtype="float64")}
+            )
+        return pd.DataFrame(
+            {
+                "ts": group["ts"].to_numpy(),
+                "value": pd.to_numeric(group[self.aliases[sql]], errors="coerce").to_numpy(),
+            }
+        )
+
+
 def _key(metric: str, segment: dict[str, str]) -> tuple[str, tuple]:
     return metric, tuple(sorted(segment.items()))
 
@@ -96,6 +152,9 @@ class Watcher:
         self._announced: set[str] = set()
         self._volume_specs: dict[str, MetricSpec | None] = {}
         self._totals: dict[tuple, float | None] = {}
+        self._hour_context: dict[datetime, tuple] = {}
+        self._tables = {table: TableHistory(db, table, dims) for table, dims in CUBES.items()}
+        self._plain: tuple[int, dict[str, dict[str, str]]] = (-1, {})
 
     def _build_universe(self) -> list[tuple[str, dict[str, str]]]:
         universe = []
@@ -139,6 +198,14 @@ class Watcher:
 
     def _series(self, spec: MetricSpec, segment: dict[str, str], hour: datetime) -> pd.DataFrame:
         """Hourly history up to and including `hour`, cached; the latest hours are re-read in case they were repaired."""
+        _, table, where = spec.parts()
+        if (
+            not where
+            and table in CUBES
+            and not any(d in spec.dims and d not in CUBES[table] for d in segment)
+        ):
+            self._tables[table].refresh(self._plain_exprs()[table], hour)
+            return self._tables[table].series(spec.sql, segment)
         key = _key(spec.name, segment)
         end = hour + HOUR
         if key in self._cache and self._cache[key][1] >= end:
@@ -152,6 +219,19 @@ class Watcher:
             frame = metric_series(self.db, spec, hour - timedelta(days=HISTORY_DAYS), end, segment)
         self._cache[key] = (frame, end)
         return frame
+
+    def _plain_exprs(self) -> dict[str, dict[str, str]]:
+        """Per table: sql -> expression of every metric (and its volume) that is a plain aggregate of that table."""
+        if self._plain[0] != len(self.graph.specs):
+            found: dict[str, dict[str, str]] = {table: {} for table in CUBES}
+            for spec in self.graph.specs.values():
+                for s in (spec, self._volume_spec(spec)):
+                    if s is not None:
+                        expr, table, where = s.parts()
+                        if not where and table in CUBES:
+                            found[table][s.sql] = expr
+            self._plain = (len(self.graph.specs), found)
+        return self._plain[1]
 
     def total(
         self, spec: MetricSpec, segment: dict[str, str], start: datetime, end: datetime
@@ -209,11 +289,13 @@ class Watcher:
 
     def score_hour(self, metric: str, segment: dict[str, str], hour: datetime) -> dict | None:
         """Actual, expected and z of one metric in one segment for one closed hour (None if it cannot be scored)."""
-        entries = calendar.entries_at(self.db, hour)
-        incomplete = completeness.incomplete_tables(self.db, hour, hour + HOUR)
-        return self._score(
-            metric, segment, hour, incomplete, entries, calendar.explained_metrics(entries, self.graph)
-        )
+        if (
+            hour not in self._hour_context
+        ):  # calendar and completeness of a closed hour do not change: look them up once
+            entries = calendar.entries_at(self.db, hour)
+            incomplete = completeness.incomplete_tables(self.db, hour, hour + HOUR)
+            self._hour_context[hour] = (incomplete, entries, calendar.explained_metrics(entries, self.graph))
+        return self._score(metric, segment, hour, *self._hour_context[hour])
 
     def _is_bad(self, metric: str, z: float) -> bool:
         """Is a move in the direction of z harmful for this metric (e.g. orders up is not a failure)?"""

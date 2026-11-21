@@ -50,6 +50,8 @@ The first page load takes about 20-30 seconds (the search engine is loading). Th
 
 To stop the app: press `Ctrl+C` in the terminal.
 
+**Every start is a clean start.** When the app launches it goes back to the 14 normal days: incidents, injected faults and added metrics from the previous run are gone. (Faults only exist while the app runs, so keeping old incidents would be misleading.)
+
 ---
 
 ## 3. Run the demo (the shopper journey)
@@ -127,7 +129,7 @@ python scripts/smoke_ui.py
 | `ruff check .` | Code style | seconds | `All checks passed!` |
 | `python scripts/smoke_ui.py` | Every dashboard page renders without an error | ~1 min | six lines starting with `ok` |
 
-`smoke_ui.py` uses the real database. Afterwards, restore the clean state with **Reset demo** in the app or the copy command in section 7.
+`smoke_ui.py` uses the real database; the app resets it on its next start anyway.
 
 ---
 
@@ -140,7 +142,7 @@ python scripts/smoke_ui.py
 | Page stays empty for a long time | First load takes 20-30 s. Refresh the browser once. |
 | Error mentioning a missing table or column | The data is from an older version. Stop the app and run `python scripts/backfill.py --force`. |
 | `rootsight.duckdb` is "being used by another process" | Stop the app before running `backfill.py` or the tests. |
-| Strange numbers or old incidents | Press **Reset demo**, or stop the app and run: `copy /Y data\rootsight.backfill.duckdb data\rootsight.duckdb` |
+| Strange numbers or old incidents | Press **Reset demo**, or simply restart the app (every start is clean). |
 | `conda` or `streamlit` not recognized | Use Anaconda Prompt and run `conda activate rootsight` first. |
 
 ---

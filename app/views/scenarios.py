@@ -18,7 +18,7 @@ failures, innocent = st.tabs(
 )
 
 
-@st.fragment(run_every=3)
+@st.fragment(run_every=2)
 def cards(ids: tuple[str, ...]) -> None:
     for sid in ids:
         scenario_card(rt, sid)

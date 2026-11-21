@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -35,15 +36,17 @@ class MetricSpec:
 
     def parts(self) -> tuple[str, str, str]:
         """Split `"expr FROM source [WHERE cond]"` into (expression, source incl. joins, condition)."""
-        select = sqlglot.parse_one(f"SELECT {self.sql}")
-        where = select.args.get("where")
-        bare = select.copy()
-        bare.set("where", None)
-        return (
-            select.expressions[0].sql(),
-            bare.sql().split(" FROM ", 1)[1],
-            where.this.sql() if where else "",
-        )
+        return split_sql(self.sql)
+
+
+@functools.cache
+def split_sql(sql: str) -> tuple[str, str, str]:
+    """Parse a metric's SQL once (cached): (expression, source incl. joins, condition)."""
+    select = sqlglot.parse_one(f"SELECT {sql}")
+    where = select.args.get("where")
+    bare = select.copy()
+    bare.set("where", None)
+    return select.expressions[0].sql(), bare.sql().split(" FROM ", 1)[1], where.this.sql() if where else ""
 
 
 class MetricGraph:

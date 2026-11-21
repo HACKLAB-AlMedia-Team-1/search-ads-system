@@ -7,7 +7,6 @@ import logging
 import shutil
 import sys
 import threading
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -30,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 BAND_SIGMAS = 3
 SHOP_PORT = 8600
+FIRST_HOUR_WAIT = 1.5
 SHOP_URL = f"http://localhost:{SHOP_PORT}"
 SPEEDS = {"Slow": 6.0, "Normal": 3.0, "Fast": 1.0}
 
@@ -40,6 +40,7 @@ class Runtime:
     def __init__(self) -> None:
         setup_logging()
         self.settings = load_settings()
+        fresh_start(self.settings.duckdb_path)
         self.db = Database(self.settings.duckdb_path)
         self.pipeline = Pipeline.from_settings(self.settings, self.db)
         self.scenarios: dict[str, Scenario] = load_scenarios(ROOT / "scenarios")
@@ -48,7 +49,12 @@ class Runtime:
         self.running = False
         self.started: dict[str, datetime] = {}
         self._thread: threading.Thread | None = None
+        self._queued = 0
+        self._wake = threading.Event()
+        self._stepped = threading.Event()
         self._points: dict[tuple, dict | None] = {}
+        self._latest: dict[tuple, dict | None] = {}
+        self._wanted: set[tuple] = set()
         try:
             self.shop = start_shop(self, SHOP_PORT)
         except OSError:
@@ -60,29 +66,46 @@ class Runtime:
         """The next simulated hour (everything before it is already in the database)."""
         return self.pipeline.now
 
-    def step(self, hours: int = 1) -> None:
-        """Advance the simulation by whole hours."""
-        for _ in range(hours):
+    @property
+    def busy(self) -> bool:
+        """Is the simulation advancing right now (clock running, or queued hours still being worked through)?"""
+        return self._thread is not None and self._thread.is_alive()
+
+    def _work(self) -> None:
+        """Background worker: queued hours run back to back; the running clock waits `seconds_per_hour` between hours."""
+        while self.running or self._queued > 0:
             with self.lock:
                 self.pipeline.step()
+                self._score_wanted()
+            self._stepped.set()
+            if self._queued > 0:
+                self._queued -= 1
+            else:
+                self._wake.wait(self.seconds_per_hour)
+            self._wake.clear()
+
+    def _ensure_worker(self) -> None:
+        with self.lock:
+            if not self.busy:
+                self._thread = threading.Thread(target=self._work, daemon=True)
+                self._thread.start()
+
+    def advance(self, hours: int) -> None:
+        """Advance by whole hours in the background, so the screen stays responsive and shows each hour as it passes."""
+        self._queued += hours
+        self._stepped.clear()
+        self._ensure_worker()
+        self._stepped.wait(FIRST_HOUR_WAIT)  # so the screen redraws with the first hour already done
 
     def start(self) -> None:
         """Run the simulation continuously in the background, one hour every `seconds_per_hour`."""
-        if self.running:
-            return
         self.running = True
-
-        def loop() -> None:
-            while self.running:
-                self.step()
-                time.sleep(self.seconds_per_hour)
-
-        self._thread = threading.Thread(target=loop, daemon=True)
-        self._thread.start()
+        self._ensure_worker()
 
     def pause(self) -> None:
         """Stop the background simulation and wait for the hour in progress to finish."""
-        self.running = False
+        self.running, self._queued = False, 0
+        self._wake.set()
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=60)
 
@@ -116,7 +139,7 @@ class Runtime:
         if since is None or not scenario.event_log:
             return None
         row = self.db.df(
-            "SELECT incident_id, status, report_json FROM incidents WHERE cause_component = ? AND first_seen >= ? ORDER BY incident_id LIMIT 1",
+            "SELECT incident_id, status, report_json FROM incidents WHERE cause_component = ? AND last_seen >= ? ORDER BY incident_id DESC LIMIT 1",
             [scenario.event_log[0]["component"], since - HOUR],
         )
         if row.empty:
@@ -154,19 +177,42 @@ class Runtime:
         self.db.insert_df("ux_events", pd.DataFrame([row]))
 
     def point(self, metric: str, segment: dict, hour: datetime) -> dict | None:
-        """Actual, expected, spread and z of a metric for a closed hour (cached per hour)."""
-        key = (metric, tuple(sorted(segment.items())), hour)
+        """Actual, expected, spread and z of a metric for a closed hour (cached per hour).
+
+        The page never computes while the simulation is advancing (that made the screen wait and slowed the
+        simulation down): the worker fills in the newest hour for every series a page has asked for, and until
+        then the last known value is shown.
+        """
+        series = (metric, tuple(sorted(segment.items())))
+        key = (*series, hour)
+        self._wanted.add(series)
         if key not in self._points:
+            if self.busy:
+                return self._latest.get(series)
             with self.lock:
                 self._points[key] = self.pipeline.watcher.score_hour(metric, segment, hour)
+        self._latest[series] = self._points[key]
         return self._points[key]
+
+    def _score_wanted(self) -> None:
+        """After an hour is simulated: score that hour for every series the pages show (called with the lock held)."""
+        hour = self.now - HOUR
+        for metric, segment in list(self._wanted):
+            self._points[(metric, segment, hour)] = self.pipeline.watcher.score_hour(
+                metric, dict(segment), hour
+            )
+
+    def _known(self, metric: str, segment: dict, hour: datetime) -> dict | None:
+        """The value for exactly this hour, or None if it is not known yet (the chart adds it on a later refresh)."""
+        self.point(metric, segment, hour)
+        return self._points.get((metric, tuple(sorted(segment.items())), hour))
 
     def band(self, metric: str, segment: dict | None = None, hours: int = 36) -> pd.DataFrame:
         """Hourly actual with the expected band for the last `hours` closed hours."""
         rows = []
         for k in range(hours, 0, -1):
             hour = self.now - HOUR * k
-            p = self.point(metric, segment or {}, hour)
+            p = self._known(metric, segment or {}, hour)
             if p:
                 rows.append({"ts": hour, "actual": p["actual"], "expected": p["expected"], "z": p["z"],
                              "low": p["expected"] - BAND_SIGMAS * p["spread"], "high": p["expected"] + BAND_SIGMAS * p["spread"]})  # fmt: skip
@@ -188,14 +234,26 @@ def get_runtime() -> Runtime:
     return Runtime()
 
 
+def fresh_start(path: Path) -> None:
+    """Start from the 14 clean days of history: restore the backfill snapshot and drop leftovers of the last run.
+
+    Faults live only in memory, so after a restart an old database would hold incidents whose fault no longer exists.
+    """
+    snapshot = path.with_suffix(".backfill.duckdb")
+    if not snapshot.is_file():
+        logger.warning("No snapshot %s; using the database as it is (run scripts/backfill.py)", snapshot.name)
+        return
+    path.with_name(path.name + ".wal").unlink(
+        missing_ok=True
+    )  # unfinished writes of a run that was stopped with Ctrl+C
+    shutil.copy(snapshot, path)
+    path.with_name("metrics_custom.yaml").unlink(missing_ok=True)
+
+
 def reset_demo() -> None:
     """Throw away everything that happened in the demo and restore the 14 clean days of history."""
-    rt = get_runtime()
-    rt.shutdown()
-    path = rt.settings.duckdb_path
-    shutil.copy(path.with_suffix(".backfill.duckdb"), path)
-    rt.pipeline.custom_metrics.unlink(missing_ok=True)
-    get_runtime.clear()
+    get_runtime().shutdown()
+    get_runtime.clear()  # the next page run builds a new Runtime, which starts fresh
 
 
 def controls(rt: Runtime, key: str) -> None:
@@ -209,8 +267,12 @@ def controls(rt: Runtime, key: str) -> None:
         width="stretch",
         on_click=rt.pause if rt.running else rt.start,
     )
-    one.button("+1 hour", key=f"{key}_1", width="stretch", on_click=rt.step, args=(1,), disabled=rt.running)
-    six.button("+6 hours", key=f"{key}_6", width="stretch", on_click=rt.step, args=(6,), disabled=rt.running)
+    one.button(
+        "+1 hour", key=f"{key}_1", width="stretch", on_click=rt.advance, args=(1,), disabled=rt.running
+    )
+    six.button(
+        "+6 hours", key=f"{key}_6", width="stretch", on_click=rt.advance, args=(6,), disabled=rt.running
+    )
     current = min(SPEEDS, key=lambda name: abs(SPEEDS[name] - rt.seconds_per_hour))
     choice = speed.segmented_control(
         "Speed (one simulated hour)", list(SPEEDS), default=current, key=f"{key}_speed"
@@ -218,11 +280,11 @@ def controls(rt: Runtime, key: str) -> None:
     rt.seconds_per_hour = SPEEDS[choice or current]
 
 
-@st.fragment(run_every=2)
+@st.fragment(run_every=1)
 def _status(rt: Runtime) -> None:
     active = rt.active()
     faults = "".join(f"<br>● {sid}: {rt.scenarios[sid].name}" for sid in active) or "<br>none"
-    clock = "running" if rt.running else "paused"
+    clock = "running" if rt.running else "advancing ..." if rt.busy else "paused"
     st.markdown(
         f'<div class="side-status"><span class="muted">Simulated time ({clock})</span><br><b>{rt.now:%a %d %b, %H:%M}</b>'
         f'<br><span class="muted">Active faults</span>{faults}</div>',

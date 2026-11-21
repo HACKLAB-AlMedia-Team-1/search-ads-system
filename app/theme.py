@@ -19,6 +19,8 @@ CSS = """
 .block-container { padding-top: 3.2rem; max-width: 1380px; }
 [data-testid="stSidebar"] { border-right: 1px solid var(--border); }
 .muted { color: var(--muted); }
+/* live panels refresh every second: do not fade them out while a refresh is on its way */
+[data-stale="true"] { opacity: 1 !important; transition: none !important; }
 /* ---------- status banner ---------- */
 .banner { border-radius: 12px; padding: 14px 18px; margin: 4px 0 14px; display:flex; align-items:center; gap:14px; border:1px solid var(--border); background: var(--surface); }
 .banner .dot { width:14px; height:14px; border-radius:50%%; flex:none; }

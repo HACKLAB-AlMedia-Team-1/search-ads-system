@@ -24,7 +24,7 @@ st.markdown(
 controls(rt, "journey")
 
 
-@st.fragment(run_every=2)
+@st.fragment(run_every=1)
 def live() -> None:
     st.caption("Germany, last full hour")
     kpi_grid(rt, [("Orders", "orders"), ("Zero-result searches", "zero_result_rate"), ("Ad spend", "ad_spend"),
