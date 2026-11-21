@@ -1,0 +1,25 @@
+# secrets
+.env
+
+# data (too big for git; re-created with SETUP.md + scripts)
+data/raw/
+data/processed/
+data/*.duckdb
+data/*.duckdb.wal
+data/cache/
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# keep agent recordings (small JSON, needed for the demo replay)
+!agent/recordings/

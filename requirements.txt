@@ -1,0 +1,36 @@
+# RootSight Python dependencies (installed by environment.yml via pip)
+# See SETUP.md step 3 for a plain-language explanation of every package.
+
+# --- AI + web ---
+anthropic>=0.40          # Claude API client (agent + relevance judge + onboarding agent)
+httpx>=0.27              # HTTP client, used to call the Linkup web search API
+python-dotenv>=1.0       # loads API keys from the .env file
+pydantic>=2.6            # typed data objects (reports, tool results, configs)
+pyyaml>=6.0              # reads the metric graph and scenario files (.yaml)
+
+# --- data ---
+pandas>=2.2              # tables in Python
+numpy>=1.26              # fast maths
+pyarrow>=15              # reads/writes Parquet files
+duckdb>=1.0              # the shop database (SQL on local files, no server)
+huggingface_hub>=0.34    # gives the `hf` command to download the Amazon ESCI dataset
+
+# --- search engine ---
+rank-bm25>=0.2.2         # BM25 ranking: the real search algorithm of our shop
+snowballstemmer>=2.2     # word stemming for English and Spanish ("zapatillas" -> "zapatill")
+unidecode>=1.3           # removes accents ("canción" -> "cancion") for the Spanish analyzer
+
+# --- monitoring + graph ---
+scipy>=1.12              # robust statistics (median, MAD, correlation)
+networkx>=3.2            # the metric graph
+sqlglot>=23              # parses SQL of new metrics so the onboarding agent knows what they use
+
+# --- UI ---
+streamlit>=1.35          # web UI: ShopLens shop + control room
+streamlit-agraph>=0.0.45 # interactive graph drawing inside Streamlit
+plotly>=5.20             # charts with expected bands
+
+# --- dev ---
+tqdm>=4.66               # progress bars for data preparation
+pytest>=8.0              # automated tests
+ruff>=0.5                # code formatter + linter
