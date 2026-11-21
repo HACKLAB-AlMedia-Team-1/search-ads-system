@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Exec(cmd)"
+      "Exec(cmd)",
+      "Exec(PYTHONIOENCODING=utf-8 \"C:/Users/aadhi/anaconda3/envs/rootsight/python.exe\")",
+      "Exec(PYTHONIOENCODING=utf-8 LLM_MODE=offline LINKUP_MODE=offline \"C:/Users/aadhi/anaconda3/envs/rootsight/python.exe\")",
+      "Exec(sed)",
+      "Exec(cp)",
+      "Exec(sleep)",
+      "Exec(\"C:/Users/aadhi/anaconda3/envs/rootsight/python.exe\")"
     ]
   }
 }

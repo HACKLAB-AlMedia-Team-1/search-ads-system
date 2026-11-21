@@ -23,3 +23,8 @@ Thumbs.db
 
 # keep agent recordings (small JSON, needed for the demo replay)
 !agent/recordings/
+
+# generated at runtime
+data/*.yaml
+data/*.duckdb
+.shots/

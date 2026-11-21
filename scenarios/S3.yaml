@@ -1,0 +1,9 @@
+id: S3
+name: Mobile search failure (Android)
+fault: android_filter_null
+start: "2026-11-25T16:00:00"
+end: "2026-11-25T23:00:00"
+scope: {platform: android}
+event_log:
+  - {ts: "2026-11-25T15:55:00", type: release, component: android-app, detail: "5.2.0 rolled out 100%"}
+expected_root_cause: android-app 5.2.0

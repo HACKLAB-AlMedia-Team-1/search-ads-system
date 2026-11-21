@@ -90,9 +90,14 @@ def main() -> int:
             ok &= _report(bool(value), f"{label} {'set' if value else 'missing'}")
         if has_url and not _is_loopback(settings.llm_base_url):
             has_key = bool(settings.llm_api_key)
-            ok &= _report(has_key, f"LLM_API_KEY {'set' if has_key else 'missing'} (required: non-local endpoint)")
+            ok &= _report(
+                has_key, f"LLM_API_KEY {'set' if has_key else 'missing'} (required: non-local endpoint)"
+            )
         else:
-            _report(True, f"LLM_API_KEY {'set' if settings.llm_api_key else 'missing'} (not required: local endpoint)")
+            _report(
+                True,
+                f"LLM_API_KEY {'set' if settings.llm_api_key else 'missing'} (not required: local endpoint)",
+            )
     else:
         _report(True, f"LLM settings not needed in mode {settings.llm_mode}")
 
@@ -100,14 +105,21 @@ def main() -> int:
         has_key = bool(settings.linkup_api_key)
         ok &= _report(has_key, f"LINKUP_API_KEY {'set' if has_key else 'missing'}")
     else:
-        _report(True, f"LINKUP_API_KEY {'set' if settings.linkup_api_key else 'missing'} (not needed in offline mode)")
+        _report(
+            True,
+            f"LINKUP_API_KEY {'set' if settings.linkup_api_key else 'missing'} (not needed in offline mode)",
+        )
 
     files = _esci_files(settings.data_raw_dir)
     for path in files:
         print(f"      {path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}")
     has_parquet = any(p.suffix == ".parquet" for p in files)
-    if not _report(has_parquet, f"ESCI data in {settings.data_raw_dir / 'esci'} ({len(files)} files, need a .parquet)"):
-        print("      Download it with SETUP Step 6: hf download milistu/amazon-esci-data --repo-type dataset --local-dir data/raw/esci")
+    if not _report(
+        has_parquet, f"ESCI data in {settings.data_raw_dir / 'esci'} ({len(files)} files, need a .parquet)"
+    ):
+        print(
+            "      Download it with SETUP Step 6: hf download milistu/amazon-esci-data --repo-type dataset --local-dir data/raw/esci"
+        )
         ok = False
 
     print("All checks passed." if ok else "Some required checks failed.")

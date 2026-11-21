@@ -1,0 +1,9 @@
+id: S2
+name: Product indexing failure
+fault: partial_index
+start: "2026-11-26T09:00:00"
+end: "2026-11-26T17:00:00"
+scope: {market: all}
+event_log:
+  - {ts: "2026-11-26T08:55:00", type: job, component: index-build, detail: "#812 status=partial (shards 0-1 missing)"}
+expected_root_cause: index-build #812

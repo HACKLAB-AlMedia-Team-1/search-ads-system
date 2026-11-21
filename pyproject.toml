@@ -5,3 +5,8 @@ target-version = "py311"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "-m 'not integration'"
+markers = ["integration: full-engine scenario runs (slow); run with `pytest -m integration`"]
+
+[tool.ruff.lint.per-file-ignores]
+".shots/*" = ["ALL"]

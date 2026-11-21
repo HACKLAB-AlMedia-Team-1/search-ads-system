@@ -1,0 +1,16 @@
+id: EV1
+name: Planned marketing event (Black Friday push)
+fault: campaign_push
+start: "2026-11-27T00:00:00"
+end: "2026-11-28T00:00:00"
+scope: {market: all}
+event_log:
+  - {ts: "2026-11-27T00:00:00", type: calendar, component: campaign, detail: "black-friday-push started: budget x2, new audience"}
+calendar:
+  - start_ts: "2026-11-27T00:00:00"
+    end_ts: "2026-11-28T00:00:00"
+    name: black-friday-push
+    kind: campaign
+    scope: {market: all}
+    expected_effect: {ad_spend: 2.0, impressions: 2.0, paid_clicks: 2.0, paid_sessions: 2.0, paid_orders: 1.5, paid_revenue: 1.5}
+expected_root_cause: black-friday-push

@@ -1,0 +1,9 @@
+id: INV1
+name: Supplier delivery delay
+fault: supplier_delivery_late
+start: "2026-11-27T09:00:00"
+end: "2026-11-27T17:00:00"
+scope: {market: DE}
+event_log:
+  - {ts: "2026-11-27T08:55:00", type: job, component: goods-receiving, detail: "purchase order overdue: top-seller delivery not received"}
+expected_root_cause: goods-receiving purchase order overdue

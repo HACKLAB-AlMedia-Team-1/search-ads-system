@@ -1,0 +1,9 @@
+id: S1
+name: Search algorithm failure
+fault: ranker_v2_irrelevant
+start: "2026-11-24T14:00:00"
+end: "2026-11-24T22:00:00"
+scope: {market: all, platform: all}
+event_log:
+  - {ts: "2026-11-24T13:55:00", type: release, component: search-ranker, detail: "v2.0.0 rolled out 100%"}
+expected_root_cause: search-ranker v2.0.0

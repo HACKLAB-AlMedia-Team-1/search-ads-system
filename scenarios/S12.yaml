@@ -1,0 +1,9 @@
+id: S12
+name: Regional search failure (German)
+fault: regional_analyzer_english
+start: "2026-11-25T11:00:00"
+end: "2026-11-25T19:00:00"
+scope: {market: DE}
+event_log:
+  - {ts: "2026-11-25T10:55:00", type: config, component: search-analyzer, detail: "search-analyzer[DE] = english"}
+expected_root_cause: search-analyzer[DE] = english

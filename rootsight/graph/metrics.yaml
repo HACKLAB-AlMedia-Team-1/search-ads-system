@@ -1,0 +1,520 @@
+# The metric graph. Every metric: SQL "expression FROM table [WHERE ...]", how to read it, and its edges.
+# Edge direction in the graph is always  source -> target  = "source composes / causes / affects target".
+#   formula          : {to: <metric>, role: factor|numerator|denominator|addend}   (this metric -> target)
+#   funnel           : {to: <metric>, step: n}                                       (ordered funnel step)
+#   may_be_caused_by : {from: <metric>, confidence: 0..1}                            (that metric -> this one)
+#   context          : {from: <context node>}                                        (event source -> this metric)
+#   split_by         : created automatically from `dims`
+# Optional watcher hints: `noise` (poisson | money), `cv` (relative spread of a ratio's inputs), `min_spread`
+# and `rel_floor` (smallest spread worth reacting to, absolute / relative to the level) and `window_hours` (score rolling windows of noisy metrics).
+
+contexts:
+  events.search:
+    components: [search-ranker, search-analyzer, ranking, index-build, search-cache]
+    note: search releases, configs and index jobs
+  events.ads:
+    components: [pacing-service]
+    note: ad delivery and pacing deployments
+  events.app:
+    components: [android-app, ios-app, web-frontend]
+    platform_of: {android-app: android, ios-app: ios, web-frontend: web}
+    note: client releases
+  events.calendar:
+    types: [calendar]
+    note: planned marketing events
+  events.inventory:
+    components: [goods-receiving]
+    note: supplier deliveries and purchase orders
+  events.catalogue:
+    components: [nightly-inventory-sync]
+    note: stock, price and listing jobs
+
+metrics:
+  # ---------------- business ----------------
+  revenue:
+    description: Revenue from paid orders (EUR)
+    sql: "SUM(revenue_eur) FROM fact_hourly"
+    kind: money
+    unit: eur
+    dims: [market, platform, source]
+    business_weight: 1.0
+    bad_direction: down
+    noise: money
+    edges: []
+  orders:
+    description: Completed orders
+    sql: "SUM(orders) FROM fact_hourly"
+    kind: count
+    unit: orders
+    dims: [market, platform, source]
+    business_weight: 1.0
+    bad_direction: down
+    noise: poisson
+    edges:
+      - {type: formula, to: revenue, role: factor}
+      - {type: formula, to: conversion_rate, role: numerator}
+      - {type: may_be_caused_by, from: sessions, confidence: 0.5}
+  aov:
+    description: Average order value (EUR)
+    sql: "SUM(revenue_eur) / NULLIF(SUM(orders), 0) FROM fact_hourly"
+    kind: money
+    unit: eur
+    dims: [market, platform, source]
+    business_weight: 0.5
+    bad_direction: both
+    cv: 1.5
+    edges:
+      - {type: formula, to: revenue, role: factor}
+      - {type: may_be_caused_by, from: price_mismatch_rate, confidence: 0.3}
+  conversion_rate:
+    description: Orders per session
+    sql: "SUM(orders) / NULLIF(SUM(sessions), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.7
+    bad_direction: down
+    edges:
+      - {type: may_be_caused_by, from: search_ctr, confidence: 0.8}
+      - {type: may_be_caused_by, from: add_to_cart_rate, confidence: 0.6}
+      - {type: context, from: events.calendar}
+
+  # ---------------- funnel ----------------
+  sessions:
+    description: Sessions (organic plus paid)
+    sql: "SUM(sessions) FROM fact_hourly"
+    kind: count
+    unit: sessions
+    dims: [market, platform, source]
+    business_weight: 0.6
+    bad_direction: both
+    noise: poisson
+    edges:
+      - {type: formula, to: conversion_rate, role: denominator}
+      - {type: funnel, to: searches, step: 1}
+      - {type: context, from: events.calendar}
+      - {type: context, from: events.app}
+  organic_sessions:
+    description: Sessions that did not come from ads
+    sql: "SUM(sessions) FROM fact_hourly WHERE source = 'organic'"
+    kind: count
+    unit: sessions
+    dims: [market, platform]
+    business_weight: 0.4
+    bad_direction: both
+    noise: poisson
+    edges:
+      - {type: formula, to: sessions, role: addend}
+      - {type: context, from: events.app}
+  searches:
+    description: Searches run
+    sql: "SUM(searches) FROM fact_hourly"
+    kind: count
+    unit: searches
+    dims: [market, platform, source]
+    business_weight: 0.5
+    bad_direction: both
+    noise: poisson
+    edges:
+      - {type: formula, to: orders, role: factor}
+      - {type: funnel, to: search_ctr, step: 2}
+      - {type: may_be_caused_by, from: sessions, confidence: 0.9}
+      - {type: may_be_caused_by, from: rows_completeness, confidence: 0.9}
+  search_ctr:
+    description: Share of searches with at least one result click
+    sql: "SUM(searches_with_click) / NULLIF(SUM(searches), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.8
+    bad_direction: down
+    edges:
+      - {type: formula, to: orders, role: factor}
+      - {type: funnel, to: add_to_cart_rate, step: 3}
+      - {type: may_be_caused_by, from: zero_result_rate, confidence: 0.7}
+      - {type: may_be_caused_by, from: relevance_at_10, confidence: 0.8}
+      - {type: may_be_caused_by, from: first_exact_position, confidence: 0.6}
+  add_to_cart_rate:
+    description: Share of clicking searches that put an item in the cart
+    sql: "SUM(carts) / NULLIF(SUM(searches_with_click), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.6
+    bad_direction: down
+    edges:
+      - {type: formula, to: orders, role: factor}
+      - {type: funnel, to: checkout_rate, step: 4}
+      - {type: may_be_caused_by, from: unavailable_on_click_rate, confidence: 0.7}
+      - {type: may_be_caused_by, from: price_mismatch_rate, confidence: 0.5}
+  checkout_rate:
+    description: Share of carts that reach checkout
+    sql: "SUM(checkouts) / NULLIF(SUM(carts), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.4
+    bad_direction: down
+    edges:
+      - {type: formula, to: orders, role: factor}
+      - {type: funnel, to: payment_rate, step: 5}
+      - {type: context, from: events.app}
+  payment_rate:
+    description: Share of checkouts that complete payment
+    sql: "SUM(orders) / NULLIF(SUM(checkouts), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.4
+    bad_direction: down
+    edges:
+      - {type: formula, to: orders, role: factor}
+  top3_ctr:
+    description: Share of searches with a click in the top three results
+    sql: "SUM(clicks_top3) / NULLIF(SUM(searches), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.5
+    bad_direction: down
+    edges:
+      - {type: may_be_caused_by, from: first_exact_position, confidence: 0.6}
+      - {type: may_be_caused_by, from: ndcg_at_10, confidence: 0.7}
+
+  # ---------------- search quality ----------------
+  zero_result_rate:
+    description: Share of searches that return nothing
+    sql: "SUM(zero_result_searches) / NULLIF(SUM(searches), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.7
+    bad_direction: up
+    edges:
+      - {type: may_be_caused_by, from: index_doc_count, confidence: 0.7}
+      - {type: context, from: events.search}
+      - {type: context, from: events.app}
+  result_count_avg:
+    description: Average number of matching products per search
+    sql: "SUM(results_total) / NULLIF(SUM(searches), 0) FROM fact_hourly"
+    kind: ratio
+    unit: results
+    dims: [market, platform, source]
+    business_weight: 0.3
+    bad_direction: down
+    cv: 4.0
+    edges:
+      - {type: may_be_caused_by, from: index_doc_count, confidence: 0.6}
+  relevance_at_10:
+    description: Share of the top 10 results labelled Exact or Substitute (non-empty searches)
+    sql: "SUM(sum_relevance10) / NULLIF(SUM(searches - zero_result_searches), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.7
+    bad_direction: down
+    edges:
+      - {type: context, from: events.search}
+  ndcg_at_10:
+    description: nDCG of the top 10 results (non-empty searches)
+    sql: "SUM(sum_ndcg10) / NULLIF(SUM(searches - zero_result_searches), 0) FROM fact_hourly"
+    kind: ratio
+    unit: score
+    dims: [market, platform, source]
+    business_weight: 0.6
+    bad_direction: down
+    edges:
+      - {type: may_be_caused_by, from: relevance_at_10, confidence: 0.6}
+      - {type: may_be_caused_by, from: first_exact_position, confidence: 0.6}
+  first_exact_position:
+    description: Average position (1-11, 11 = none) of the first Exact result
+    sql: "SUM(sum_first_exact_pos) / NULLIF(SUM(searches - zero_result_searches), 0) FROM fact_hourly"
+    kind: ratio
+    unit: position
+    dims: [market, platform, source]
+    business_weight: 0.5
+    bad_direction: up
+    edges:
+      - {type: context, from: events.search}
+  search_latency_p95:
+    description: Average of the hourly 95th-percentile search latencies in the segment (ms)
+    sql: "AVG(latency_ms_p95) FROM fact_hourly"
+    kind: component
+    unit: ms
+    dims: [market, platform, source]
+    business_weight: 0.3
+    bad_direction: up
+    rel_floor: 0.4
+    edges:
+      - {type: may_be_caused_by, from: cache_hit_rate, confidence: 0.3}
+
+  # ---------------- user experience ----------------
+  avg_click_position:
+    description: Average result position that gets clicked (lower is better)
+    sql: "SUM(sum_click_position) / NULLIF(SUM(searches_with_click), 0) FROM fact_hourly"
+    kind: ratio
+    unit: position
+    dims: [market, platform, source]
+    business_weight: 0.4
+    bad_direction: up
+    edges:
+      - {type: may_be_caused_by, from: first_exact_position, confidence: 0.7}
+      - {type: context, from: events.search}
+  refinement_rate:
+    description: Share of searches followed by a reworded search
+    sql: "SUM(refinements) / NULLIF(SUM(searches), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.4
+    bad_direction: up
+    edges:
+      - {type: may_be_caused_by, from: zero_result_rate, confidence: 0.7}
+      - {type: may_be_caused_by, from: relevance_at_10, confidence: 0.6}
+  bounce_rate:
+    description: Share of sessions that leave without a click or a reworded search
+    sql: "SUM(bounces) / NULLIF(SUM(sessions), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.5
+    bad_direction: up
+    edges:
+      - {type: may_be_caused_by, from: search_ctr, confidence: 0.7}
+      - {type: may_be_caused_by, from: search_latency_p95, confidence: 0.4}
+
+  # ---------------- availability ----------------
+  unavailable_on_click_rate:
+    description: Share of clicks that land on an unavailable (sold-out or delisted) product
+    sql: "SUM(cart_unavailable_errors) / NULLIF(SUM(searches_with_click), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.5
+    bad_direction: up
+    edges:
+      - {type: may_be_caused_by, from: cache_result_age_min, confidence: 0.7}
+      - {type: may_be_caused_by, from: in_stock_rate_top, confidence: 0.8}
+      - {type: context, from: events.catalogue}
+  price_mismatch_rate:
+    description: Share of clicks where the shown price differs from the current price
+    sql: "SUM(price_mismatch_clicks) / NULLIF(SUM(searches_with_click), 0) FROM fact_hourly"
+    kind: ratio
+    unit: share
+    dims: [market, platform, source]
+    business_weight: 0.4
+    bad_direction: up
+    edges:
+      - {type: may_be_caused_by, from: cache_result_age_min, confidence: 0.7}
+      - {type: context, from: events.catalogue}
+
+  in_stock_rate_top:
+    description: Share of the top-selling products that are in stock
+    sql: "AVG(value) FROM component_hourly WHERE component = 'inventory' AND metric = 'in_stock_rate_top'"
+    kind: component
+    unit: share
+    dims: [market]
+    business_weight: 0.7
+    bad_direction: down
+    min_spread: 0.05
+    edges:
+      - {type: context, from: events.inventory}
+  product_views:
+    description: Product views (searches that led to a product click)
+    sql: "SUM(searches_with_click) FROM fact_hourly"
+    kind: count
+    unit: views
+    dims: [market, platform, source]
+    business_weight: 0.4
+    bad_direction: down
+    noise: poisson
+    edges:
+      - {type: may_be_caused_by, from: search_ctr, confidence: 0.9}
+
+  # ---------------- components ----------------
+  index_doc_count:
+    description: Products currently searchable
+    sql: "SUM(value) FROM component_hourly WHERE component = 'index' AND metric = 'index_doc_count'"
+    kind: component
+    unit: products
+    dims: [market]
+    business_weight: 0.5
+    bad_direction: down
+    edges:
+      - {type: context, from: events.search}
+  cache_hit_rate:
+    description: Share of searches served from the result cache
+    sql: "AVG(value) FROM component_hourly WHERE component = 'search-cache' AND metric = 'cache_hit_rate'"
+    kind: component
+    unit: share
+    dims: []
+    business_weight: 0.3
+    bad_direction: up
+    min_spread: 0.05
+    edges:
+      - {type: context, from: events.search}
+  cache_result_age_min:
+    description: Average age of cached results served (minutes)
+    sql: "AVG(value) FROM component_hourly WHERE component = 'search-cache' AND metric = 'cache_result_age_min'"
+    kind: component
+    unit: minutes
+    dims: []
+    business_weight: 0.4
+    bad_direction: up
+    min_spread: 5.0
+    edges:
+      - {type: may_be_caused_by, from: cache_hit_rate, confidence: 0.6}
+      - {type: context, from: events.search}
+
+  # ---------------- ads ----------------
+  ad_spend:
+    description: Advertising spend (EUR)
+    sql: "SUM(spend_eur) FROM ads_hourly"
+    kind: money
+    unit: eur
+    dims: [market, campaign_id]
+    business_weight: 0.8
+    bad_direction: both
+    rel_floor: 0.12
+    edges:
+      - {type: formula, to: roas, role: denominator}
+      - {type: formula, to: cost_per_order, role: numerator}
+      - {type: may_be_caused_by, from: pacing_ratio, confidence: 0.8}
+      - {type: context, from: events.ads}
+      - {type: context, from: events.calendar}
+  impressions:
+    description: Ad impressions served
+    sql: "SUM(impressions) FROM ads_hourly"
+    kind: count
+    unit: impressions
+    dims: [market, campaign_id]
+    business_weight: 0.5
+    bad_direction: both
+    rel_floor: 0.15
+    edges:
+      - {type: formula, to: ad_spend, role: factor}
+      - {type: may_be_caused_by, from: pacing_ratio, confidence: 0.8}
+  ad_click_rate:
+    description: Ad clicks per impression
+    sql: "SUM(paid_clicks) / NULLIF(SUM(impressions), 0) FROM ads_hourly"
+    kind: ratio
+    unit: ratio
+    dims: [market, campaign_id]
+    business_weight: 0.4
+    bad_direction: both
+    rel_floor: 0.12
+    edges:
+      - {type: formula, to: ad_spend, role: factor}
+  paid_clicks:
+    description: Paid clicks
+    sql: "SUM(paid_clicks) FROM ads_hourly"
+    kind: count
+    unit: clicks
+    dims: [market, campaign_id]
+    business_weight: 0.5
+    bad_direction: both
+    rel_floor: 0.12
+    edges:
+      - {type: may_be_caused_by, from: pacing_ratio, confidence: 0.7}
+  cpc:
+    description: Cost per paid click (EUR)
+    sql: "SUM(spend_eur) / NULLIF(SUM(paid_clicks), 0) FROM ads_hourly"
+    kind: money
+    unit: eur
+    dims: [market, campaign_id]
+    business_weight: 0.5
+    bad_direction: up
+    rel_floor: 0.12
+    edges:
+      - {type: formula, to: ad_spend, role: factor}
+      - {type: may_be_caused_by, from: pacing_ratio, confidence: 0.5}
+  paid_sessions:
+    description: Sessions that came from ads
+    sql: "SUM(paid_sessions) FROM ads_hourly"
+    kind: count
+    unit: sessions
+    dims: [market, campaign_id]
+    business_weight: 0.5
+    bad_direction: both
+    rel_floor: 0.12
+    noise: poisson
+    edges:
+      - {type: formula, to: sessions, role: addend}
+      - {type: may_be_caused_by, from: paid_clicks, confidence: 0.9}
+  paid_orders:
+    description: Orders from ad sessions
+    sql: "SUM(paid_orders) FROM ads_hourly"
+    kind: count
+    unit: orders
+    dims: [market, campaign_id]
+    business_weight: 0.7
+    bad_direction: down
+    rel_floor: 0.6
+    window_hours: 6
+    noise: poisson
+    edges:
+      - {type: formula, to: cost_per_order, role: denominator}
+      - {type: may_be_caused_by, from: paid_sessions, confidence: 0.8}
+      - {type: may_be_caused_by, from: search_ctr, confidence: 0.7}
+  paid_revenue:
+    description: Revenue from ad sessions (EUR)
+    sql: "SUM(paid_revenue_eur) FROM ads_hourly"
+    kind: money
+    unit: eur
+    dims: [market, campaign_id]
+    business_weight: 0.7
+    bad_direction: down
+    rel_floor: 0.6
+    window_hours: 6
+    noise: money
+    edges:
+      - {type: formula, to: roas, role: numerator}
+      - {type: may_be_caused_by, from: paid_orders, confidence: 0.9}
+  roas:
+    description: Return on ad spend (paid revenue / ad spend)
+    sql: "SUM(paid_revenue_eur) / NULLIF(SUM(spend_eur), 0) FROM ads_hourly"
+    kind: ratio
+    unit: ratio
+    dims: [market, campaign_id]
+    business_weight: 0.9
+    bad_direction: down
+    rel_floor: 0.6
+    window_hours: 6
+    edges:
+      - {type: may_be_caused_by, from: search_ctr, confidence: 0.6}
+      - {type: may_be_caused_by, from: relevance_at_10, confidence: 0.5}
+      - {type: context, from: events.calendar}
+  cost_per_order:
+    description: Ad spend per paid order (EUR)
+    sql: "SUM(spend_eur) / NULLIF(SUM(paid_orders), 0) FROM ads_hourly"
+    kind: money
+    unit: eur
+    dims: [market, campaign_id]
+    business_weight: 0.6
+    bad_direction: up
+    rel_floor: 0.6
+    window_hours: 6
+    edges: []
+  pacing_ratio:
+    description: Actual ad spend divided by the planned spend for the hour
+    sql: "SUM(spend_eur) / NULLIF(SUM(planned_spend_eur), 0) FROM ads_hourly"
+    kind: ratio
+    unit: ratio
+    dims: [market, campaign_id]
+    business_weight: 0.8
+    bad_direction: both
+    rel_floor: 0.12
+    edges:
+      - {type: context, from: events.ads}
+      - {type: context, from: events.calendar}
+
+  # ---------------- data quality ----------------
+  rows_completeness:
+    description: Share of expected rows that has arrived for a table (latest known)
+    sql: "MAX_BY(rows_received, arrived_at) / NULLIF(MAX_BY(rows_expected, arrived_at), 0) FROM data_arrivals"
+    kind: ratio
+    unit: share
+    dims: [table_name]
+    business_weight: 0.5
+    bad_direction: down
+    edges: []

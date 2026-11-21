@@ -1,0 +1,14 @@
+# Streamlit settings for the RootSight UI. Everything runs locally and free; no account or deployment is needed.
+
+[client]
+toolbarMode = "minimal"        # hides Streamlit's own "Deploy" button and developer menu
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
+
+[theme]
+base = "light"
+primaryColor = "#e47911"

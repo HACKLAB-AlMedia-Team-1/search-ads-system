@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShopLens</title>
+  <link rel="stylesheet" href="/shop.css">
+</head>
+<body>
+  <header class="top">
+    <a class="logo" href="/" id="logo">shop<b>lens</b></a>
+    <label class="deliver">
+      <span id="t-deliver">Deliver to</span>
+      <select id="market" aria-label="Country">
+        <option value="DE">📍 Deutschland</option>
+        <option value="US">📍 United States</option>
+        <option value="ES">📍 España</option>
+        <option value="JP">📍 日本</option>
+      </select>
+    </label>
+    <form class="search" id="search-form" role="search">
+      <span class="cat" id="t-all">All</span>
+      <input id="q" type="search" autocomplete="off" aria-label="Search">
+      <button type="submit" aria-label="Search">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="#111" stroke-width="2.4" stroke-linecap="round" d="M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 0 0 0-13zm5 11.5L20 20"/></svg>
+      </button>
+    </form>
+    <label class="deliver">
+      <span id="t-device">Shopping on</span>
+      <select id="device" aria-label="Device">
+        <option value="web">💻 Web</option>
+        <option value="android">📱 Android app</option>
+        <option value="ios">📱 iOS app</option>
+      </select>
+    </label>
+    <button class="icon-btn" id="theme" title="Light / dark mode" aria-label="Switch light and dark mode">🌙</button>
+    <button class="cart-btn" id="cart-btn" aria-label="Cart"><span id="cart-count">0</span>🛒 <b id="t-cart">Cart</b></button>
+  </header>
+  <nav class="sub" id="sub"></nav>
+
+  <div class="notes" id="notes" hidden></div>
+  <main id="main"></main>
+
+  <footer>
+    <a href="#" id="t-top">Back to top</a>
+    <p>ShopLens is a demo marketplace for RootSight. Products and search queries come from the public Amazon ESCI dataset; prices, stock, ratings and ads are simulated.</p>
+  </footer>
+
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-head"><b id="t-cart2">Shopping Cart</b><button class="icon-btn" id="drawer-close" aria-label="Close">✕</button></div>
+    <div id="cart-items"></div>
+    <div class="drawer-foot"><span id="subtotal"></span><button class="buy" id="checkout">Proceed to checkout</button></div>
+  </aside>
+  <div class="modal" id="modal" hidden><div class="modal-box" id="modal-box"></div></div>
+  <div class="toast" id="toast" hidden></div>
+  <script src="/shop.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+id: S7
+name: Ranking regression (recency boost)
+fault: ranking_boost_recency
+start: "2026-11-26T12:00:00"
+end: "2026-11-26T20:00:00"
+scope: {market: all}
+event_log:
+  - {ts: "2026-11-26T11:55:00", type: config, component: ranking, detail: "ranking.boost_recency 0.0 -> 0.8"}
+expected_root_cause: ranking.boost_recency 0.0 -> 0.8

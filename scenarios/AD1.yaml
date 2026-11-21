@@ -1,0 +1,9 @@
+id: AD1
+name: Ad budget pacing anomaly
+fault: ad_pacing_runaway
+start: "2026-11-25T00:00:00"
+end: "2026-11-26T00:00:00"
+scope: {market: DE}
+event_log:
+  - {ts: "2026-11-24T23:55:00", type: deploy, component: pacing-service, detail: "1.4.0 deployed (schedule handling changed)"}
+expected_root_cause: pacing-service 1.4.0

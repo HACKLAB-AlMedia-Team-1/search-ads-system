@@ -261,8 +261,10 @@ That's fine, because it's Devin's machine, not yours. Review and merge its PRs y
 
 ```bash
 conda activate rootsight                 # always first
-pytest -q                                # run all tests
-python scripts/prepare_data.py           # (after Phase 1) build processed data
-python scripts/backfill.py               # (after Phase 3) simulate 14 days of history
-streamlit run app/Home.py                # (after Phase 8) open the UI in the browser
+python scripts/check_env.py              # is everything in place?
+python scripts/prepare_data.py           # build data/processed (once)
+python scripts/backfill.py               # simulate 14 clean days (once; --force to redo)
+python scripts/demo.py                   # terminal demo on a private copy of the history
+streamlit run app/Home.py                # the UI
+pytest -q                                # fast tests; `pytest -m integration` for the full scenarios
 ```
