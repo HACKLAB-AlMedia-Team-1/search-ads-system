@@ -4,11 +4,11 @@ Shared memory for every agent session and every teammate. Keep it short. Newest 
 
 ## Environment facts (filled in by the HUMAN after SETUP.md)
 
-- OS: <Windows 11 / macOS / Linux>
-- Python version (`python --version`): <...>
+- OS: Windows
+- Python version (`python --version`): 3.11.18
 - Conda env name: `rootsight`
-- `scripts/check_env.py` result: <not run yet>
-- Anthropic key test (SETUP Step 5): <passed / failed>   Working model names: agent=<...> fast=<...>
+- `scripts/check_env.py` result: 2026-11-21 all packages + modes OK; only ESCI missing (exit 1)
+- Anthropic: legacy package installed but not used; no Anthropic key or test needed.
 - Linkup key test (SETUP Step 5): <passed / failed>   Working request format: <default from SETUP / changed to ...>
 - ESCI downloaded via: <hf / huggingface-cli / github-lfs>
 - Taobao UserBehavior present: <yes / no>
@@ -21,8 +21,8 @@ Shared memory for every agent session and every teammate. Keep it short. Newest 
 
 | Phase | Name | Status | Notes |
 |-------|------|--------|-------|
-| Setup | Human setup (SETUP.md) | todo | |
-| 0 | Bootstrap | todo | |
+| Setup | Human setup (SETUP.md) | in progress | env done; ESCI (Step 6) not downloaded yet |
+| 0 | Bootstrap | blocked | code written; acceptance needs ESCI so `check_env.py` is green |
 | 1 | Data preparation | todo | |
 | 2 | Search engine + faults | todo | Devin candidate |
 | 3 | Simulator, ads, database | todo | |
@@ -44,6 +44,7 @@ Scenario build status: S1 todo · AD1 todo · EV1 todo · DQ1 todo · S12 todo �
 - 2026-11-21 · Must scenarios: S1, S12, S3, AD1, EV1, DQ1. Should: S2, S7. Could: S15.
 - 2026-11-21 · Numbers and the evidence checklist are computed in code; the LLM chooses tools, judges relevance and writes the story.
 - 2026-11-21 · LLM_MODE offline by default; record/replay for the demo. Budget: Claude $25, Linkup $20.
+- 2026-11-21 · Runtime: offline deterministic by default; optional local Ollama (OpenAI-compatible, two roles agent/fast, no key on loopback); optional cloud only if explicitly chosen later; evidence stays deterministic; offline demo needs no recording. No Anthropic key (package unused). Reason: no paid dependency.
 - 2026-11-21 · The human does all installs/downloads; agents never install or download (see CLAUDE.md).
 
 ## Open questions
@@ -57,5 +58,9 @@ Scenario build status: S1 todo · AD1 todo · EV1 todo · DQ1 todo · S12 todo �
 - Slack-style alert output.
 
 ## Session log (newest first)
+
+- 2026-11-21 · Phase 0 bootstrap (branch devin/phase-0): package skeleton with docstring-only modules, `config.py` (Settings, `load_settings`), `logging_setup.py`, `scripts/check_env.py`, `pyproject.toml`, `tests/test_config.py`.
+- `.env.example`, SETUP Steps 0/3/4/5 changed to an LLM-key-free, offline-default setup (Linkup optional). No monitoring, agent, or UI implemented yet.
+- Blocked on ESCI: human runs SETUP Step 6, then `python scripts/check_env.py` before Phase 1.
 
 - 2026-11-21 · Kit created: README, SETUP, CLAUDE, AGENTS, PLAN, DOSSIER, SCENARIOS, MEMORY, environment.yml, requirements.txt, .env.example. Next: human runs SETUP.md, then Phase 0.

@@ -21,11 +21,12 @@ differs, both versions are given.
 
 Accounts and keys you need:
 
-- **Anthropic API key**: console.anthropic.com → API Keys. In the console, also set a
-  **monthly spend limit** of $25 so you can never overspend.
-- **Linkup API key**: app.linkup.so → API key.
+- **Linkup API key** (optional): app.linkup.so → API key. Only needed for `LINKUP_MODE=live`.
+- **No LLM key is required.** The default `LLM_MODE=offline` uses a deterministic rule-based
+  agent. No model is needed before Phase 6; then you may optionally run a local model
+  (for example Ollama at `http://127.0.0.1:11434/v1`, no key needed).
 
-You do **not** need a GPU. Everything runs on CPU, and all AI runs through the Claude API.
+You do **not** need a GPU. Everything runs on CPU.
 
 ---
 
@@ -76,7 +77,7 @@ pip install -r requirements.txt
 
 | Package | Why we need it |
 |---------|----------------|
-| `anthropic` | Talks to Claude. Used by the investigator agent, the relevance judge and the new-metric agent. |
+| `anthropic` | Legacy, currently unused. LLM calls will go through plain HTTP (`httpx`) in Phase 6. |
 | `httpx` | Sends web requests. We use it to call the Linkup web search API. |
 | `python-dotenv` | Reads your secret keys from the `.env` file so they are never written in code. |
 | `pydantic` | Defines clean data shapes (a report, an incident) so nothing is malformed. |
@@ -108,32 +109,29 @@ You should see `ALL OK`. If a name is missing, run `pip install <that-package>`.
 
 ---
 
-## Step 4 — Put your API keys in `.env`
+## Step 4 — Create your `.env`
 
 ```bash
-# Windows
+# Windows PowerShell
+Copy-Item .env.example .env
+# Windows Anaconda Prompt (cmd)
 copy .env.example .env
 # macOS/Linux
 cp .env.example .env
 ```
 
-Open `.env` in an editor and fill in `ANTHROPIC_API_KEY` and `LINKUP_API_KEY`.
-Leave `LLM_MODE=offline` and `LINKUP_MODE=offline` for now. The agent works without
-spending money while coding, and you switch to `live` / `record` only for real demo runs.
+The defaults work as they are: `LLM_MODE=offline` and `LINKUP_MODE=offline` make no model
+or web calls and cost nothing. No LLM key or model name is needed until Phase 6, and even
+then only if you choose `live` / `record` (optionally with a local model such as Ollama).
+Only fill in `LINKUP_API_KEY` if you decide to use live web search.
 
-**Why:** `.env` holds secrets and is listed in `.gitignore`, so it is never uploaded to GitHub.
+**Why:** `.env` may hold secrets and is listed in `.gitignore`, so it is never uploaded to GitHub.
 
 ---
 
-## Step 5 — Test both keys (costs a fraction of a cent)
+## Step 5 — (Optional) Test the Linkup key (may cost a little)
 
-**Claude:**
-```bash
-python -c "import os,anthropic; from dotenv import load_dotenv; load_dotenv(); c=anthropic.Anthropic(); r=c.messages.create(model=os.environ['CLAUDE_MODEL_FAST'],max_tokens=20,messages=[{'role':'user','content':'Say: key works'}]); print(r.content[0].text)"
-```
-Expected: something like `key works`.
-If you get a "model not found" error, open console.anthropic.com → Models, copy the
-exact current Sonnet and Haiku model names into `.env`, and try again.
+Skip this unless you want `LINKUP_MODE=live`. No LLM test is needed.
 
 **Linkup:**
 ```bash
