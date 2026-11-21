@@ -89,6 +89,7 @@ Tests: `pytest -q` = 31 fast tests (~50 s); `pytest -m integration` = 15 scenari
 
 ## Session log (newest first)
 
+- 2026-11-21 · Bug fix: dark mode was lost when changing dashboard page (Streamlit drops a widget's state when the widget is not drawn during a page switch). The choice is now kept in its own session key (`dark_mode`) in `app/common.py`. Checked in a real browser across three pages, both directions.
 - 2026-11-21 · Added `docs/RUN_DEMO.md`: how to start the app, run the journey, run the tests, and fix common problems.
 - 2026-11-21 · Journey rework: DE market, INV1, ads formula, look-alike checks, incident matching, web shop, dashboard rebuild, flowchart. Bugs found on the way: random sell-outs of popular products caused false alarms (fixed by PO-managed top sellers + auto-reorder); EV1 lacked `impressions` in its expected effect; journey steps run back to back merged into one incident; default page URL is `/` (not `/journey`).
 - 2026-11-21 · Phases 6-9 finished: pipeline wiring, incident manager, onboarding, Streamlit UI, demo script, README, `docs/algorithm.md`. Demo bugs found and fixed: calendar entries outliving `stop_all` hid a real incident; related metrics (first_exact_position vs refinement_rate) opened duplicate incidents; S12/S3 evidence stayed LIKELY until rivals were rejected by scope; component metrics were not in the every-tick KPI list so S2/S15 were missed.

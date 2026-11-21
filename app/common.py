@@ -234,9 +234,11 @@ def _status(rt: Runtime) -> None:
 
 def page() -> tuple[Runtime, dict[str, str]]:
     """Common page setup: theme (dark-mode switch) and the sidebar status box. Returns (runtime, palette)."""
-    st.session_state.setdefault("dark", st.query_params.get("theme") == "dark")
+    # Streamlit forgets a widget's own state when you move to another page, so the choice is kept in a separate key.
+    remembered = st.session_state.setdefault("dark_mode", st.query_params.get("theme") == "dark")
     with st.sidebar:
-        palette = theme.apply(st.toggle("Dark mode", key="dark"))
+        st.session_state["dark_mode"] = st.toggle("Dark mode", value=remembered, key="dark_toggle")
+        palette = theme.apply(st.session_state["dark_mode"])
         rt = get_runtime()
         _status(rt)
         st.link_button("🛒 Open the ShopLens store", SHOP_URL, width="stretch")
