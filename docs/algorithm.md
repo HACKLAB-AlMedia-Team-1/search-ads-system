@@ -54,7 +54,9 @@ An event is rejected when its component is not connected to the metric in the gr
 ## 6. Incidents
 
 Fingerprint = `root metric | segment | cause component`. Open -> ongoing -> resolved (after 3 normal hours).
-A person is re-notified only when the money impact grows by more than 50% or the scope widens.
+Only hours in which the incident's metric could be judged count as normal: a night hour with too few shoppers says nothing, so the incident stays open.
+A person is re-notified only when the money impact grows by more than 50% or the scope widens. The report's cost is refreshed with every matching case.
+When a person fixes the cause (*End Simulation* in the dashboard) the incident is closed at once; the same cause coming back later is a new incident.
 
 ## 7. Adding a metric
 

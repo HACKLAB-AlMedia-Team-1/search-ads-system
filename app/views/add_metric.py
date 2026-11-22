@@ -6,23 +6,6 @@ import pandas as pd
 import streamlit as st
 from common import page
 
-EXAMPLES = {
-    "no_click_search_rate": (
-        "Share of searches without a click",
-        "(SUM(searches) - SUM(searches_with_click)) / NULLIF(SUM(searches), 0) FROM fact_hourly",
-    ),
-    "wasted_spend_share": (
-        "Share of ad spend on sessions whose search found nothing to click",
-        (
-            "SUM(spend_eur * idle) / NULLIF(SUM(spend_eur), 0) FROM (SELECT a.ts, a.market, a.campaign_id, a.spend_eur, "
-            "1 - f.clicked / NULLIF(f.searches, 0) AS idle FROM ads_hourly a JOIN (SELECT ts, market, "
-            "SUM(searches_with_click) AS clicked, SUM(searches) AS searches FROM fact_hourly WHERE source = 'paid' "
-            "GROUP BY ts, market) f ON a.ts = f.ts AND a.market = f.market) AS paid_idle"
-        ),
-    ),
-}
-BLANK = "Write my own"
-
 rt, palette = page()
 st.title("Add or edit a metric")
 add_tab, edit_tab = st.tabs(["Add a metric", "Edit a metric"])
@@ -45,43 +28,31 @@ def links_table(result) -> None:
     st.caption(f"Read from the SQL: tables {result.parsed['tables']}, columns {result.parsed['columns']}.")
 
 
-with edit_tab:
-    st.markdown(
-        "Pick any metric, built-in or added. Change its **description** or **SQL**; the SQL is tested on 7 days of history, "
-        "its links are re-checked, and the change is written to the metric's YAML file (`rootsight/graph/metrics.yaml` for built-in ones)."
-    )
-    chosen = st.selectbox("Metric", sorted(rt.pipeline.graph.specs), key="edit_metric_name")
-    current = rt.pipeline.graph.metric(chosen)
-    with st.form(f"edit_metric_{chosen}"):
-        new_description = st.text_input("Description", value=current.description)
-        new_sql = st.text_area("SQL: an expression, then FROM a table", value=current.sql, height=150)
-        saved = st.form_submit_button("Save the change", type="primary")
-    if saved:
-        with rt.lock:
-            edited = rt.pipeline.edit_metric(chosen, new_description.strip(), new_sql.strip())
-            rt.forget_points()
-        for problem in edited.problems:
-            st.error(problem)
-        if edited.added:
-            st.success(f"'{chosen}' is saved and will be scored with the new SQL from the next hour.")
-            if edited.proposals:
-                links_table(edited)
+def metric_fields(tab: str, button: str, existing: bool) -> tuple[str, str, str, bool]:
+    """The one template both tabs use: name, description, SQL, button. Only the name differs: typed (add) or picked (edit)."""
+    description = sql = ""
+    if existing:
+        name = st.selectbox("Name", sorted(rt.pipeline.graph.specs), key=f"{tab}_name")
+        description, sql = rt.pipeline.graph.metric(name).description, rt.pipeline.graph.metric(name).sql
+    else:
+        name = st.text_input("Name", key=f"{tab}_name", placeholder="lowercase_with_underscores")
+    with st.form(f"{tab}_{name if existing else 'new'}"):
+        description = st.text_input("Description", value=description, placeholder="What the metric measures, in one line")
+        sql = st.text_area("SQL: an expression, then FROM a table", value=sql, height=150,
+                           placeholder="SUM(orders) / NULLIF(SUM(sessions), 0) FROM fact_hourly")  # fmt: skip
+        pressed = st.form_submit_button(button, type="primary")
+    return name.strip(), description.strip(), sql.strip(), pressed
+
 
 with add_tab:
     st.markdown(
         "Give only a **name**, a **description** and the **SQL**. You do not say where it belongs: the system reads the SQL, proposes "
         "the links to existing metrics, checks each link against 7 days of history, and starts monitoring the metric at the next hour."
     )
-    example = st.segmented_control("Start from", [*EXAMPLES, BLANK], default=next(iter(EXAMPLES))) or BLANK
-    description, sql = EXAMPLES.get(example, ("", ""))
-    with st.form("add_metric"):
-        name = st.text_input("Name (lowercase, underscores)", value="" if example == BLANK else example)
-        description = st.text_input("Description", value=description)
-        sql = st.text_area("SQL: an expression, then FROM a table", value=sql, height=150)
-        submitted = st.form_submit_button("Place it in the graph", type="primary")
+    name, description, sql, submitted = metric_fields("add_metric", "Place it in the graph", existing=False)
     if submitted:
         with rt.lock:
-            result = rt.pipeline.add_metric(name.strip(), description.strip(), sql.strip())
+            result = rt.pipeline.add_metric(name, description, sql)
         for problem in result.problems:
             st.error(problem)
         if result.added:
@@ -89,3 +60,20 @@ with add_tab:
                 f"'{name}' is now in the graph (can be split by: {', '.join(result.spec.dims) or 'nothing'}) and will be scored from the next hour."
             )
             links_table(result)
+
+with edit_tab:
+    st.markdown(
+        "Pick any metric, built-in or added. Change its **description** or **SQL**; the SQL is tested on 7 days of history, "
+        "its links are re-checked, and the change is written to the metric's YAML file (`rootsight/graph/metrics.yaml` for built-in ones)."
+    )
+    chosen, new_description, new_sql, saved = metric_fields("edit_metric", "Save the change", existing=True)
+    if saved:
+        with rt.lock:
+            edited = rt.pipeline.edit_metric(chosen, new_description, new_sql)
+            rt.forget_points()
+        for problem in edited.problems:
+            st.error(problem)
+        if edited.added:
+            st.success(f"'{chosen}' is saved and will be scored with the new SQL from the next hour.")
+            if edited.proposals:
+                links_table(edited)

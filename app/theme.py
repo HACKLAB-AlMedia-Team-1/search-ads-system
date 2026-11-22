@@ -52,6 +52,13 @@ CSS = """
 .check { display:flex; gap:10px; padding: 7px 0; border-bottom: 1px dashed var(--border); font-size:.9rem; }
 .check .mark { font-weight:800; width:46px; flex:none; } .check.pass .mark { color: var(--good); } .check.fail .mark { color: var(--bad); }
 .trail { font-size:.86rem; padding: 6px 0 6px 12px; border-left: 3px solid var(--accent); margin: 6px 0; }
+.query { margin: 4px 0 0; font-size:.84rem; } .query summary { cursor:pointer; } .query summary span { color: var(--muted); margin-left: 8px; }
+.query pre { background: var(--tint); border:1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0; white-space: pre-wrap; word-break: break-word; font-size:.78rem; }
+.query table { border-collapse: collapse; font-size:.78rem; margin: 2px 0 4px; } .query th, .query td { border:1px solid var(--border); padding: 2px 8px; text-align:left; }
+.query th { background: var(--tint); } .query .more { color: var(--muted); font-size:.76rem; display:block; }
+.activity { margin: 4px 0 10px; font-size:.86rem; } .activity i { color: var(--muted); font-style: normal; }
+.minis { display:grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap:8px; margin-top:6px; }
+.mini { background: var(--tint); border:1px solid var(--border); border-radius: 10px; padding: 6px 10px; } .mini b { font-size:1.15rem; display:block; } .mini span { color: var(--muted); font-size:.76rem; }
 .trail code { font-weight:700; } .trail small { color: var(--muted); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* ---------- storefront ---------- */
 .st-key-sl-header { background: #131921; padding: 12px 16px 10px; border-radius: 12px 12px 0 0; }

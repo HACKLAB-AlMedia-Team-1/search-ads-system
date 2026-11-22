@@ -65,7 +65,8 @@ main { max-width: 1500px; margin: 0 auto; padding: 14px 18px 30px; min-height: 6
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 4px; }
 .card:hover { box-shadow: 0 4px 16px rgba(0, 0, 0, .14); }
 .card .pic { background: var(--tile); border-radius: 6px; height: 150px; display: flex; align-items: center; justify-content: center; font-size: 64px; cursor: pointer; }
-.card .spons { font-size: 11px; color: var(--muted); height: 14px; }
+.card .spons { font-size: 11px; color: var(--muted); height: 16px; }
+.best { background: #c45500; color: #fff; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 3px; white-space: nowrap; }
 .card .title { color: var(--link); line-height: 1.3; height: 3.9em; overflow: hidden; cursor: pointer; }
 .card .title:hover { color: #c7511f; text-decoration: underline; }
 .stars { color: var(--star); letter-spacing: 1px; } .stars small { color: var(--link); letter-spacing: 0; margin-left: 4px; }

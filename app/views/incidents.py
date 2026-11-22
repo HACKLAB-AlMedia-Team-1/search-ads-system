@@ -25,11 +25,12 @@ COLUMNS = {
 rt, palette = page()
 st.title("Incidents")
 st.caption(
-    "One incident per problem. An ongoing problem updates its incident instead of creating new ones; it closes after three normal hours."
+    "One incident per problem. An ongoing problem updates its incident instead of creating new ones; "
+    "it closes when you press End Simulation, or by itself after three normal hours."
 )
 frame = rt.db.df(f"SELECT {', '.join(COLUMNS)}, report_json FROM incidents ORDER BY incident_id DESC")
 if frame.empty:
-    st.info("No incidents yet. Open 'Shopper journey', press 'Simulate it' on a step and let the clock run.")
+    st.info("No incidents yet. Open 'Shopper journey', press 'Simulate it' on a step and wait a few seconds.")
     st.stop()
 st.dataframe(frame[list(COLUMNS)].rename(columns=COLUMNS), width="stretch", hide_index=True)
 labels = {

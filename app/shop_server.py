@@ -28,7 +28,6 @@ STATIC = Path(__file__).with_name("shop")
 TYPES = {".html": "text/html", ".css": "text/css", ".js": "text/javascript"}
 PLATFORMS = ("web", "android", "ios")
 FETCH, HOME_ROW = 40, 6
-BUDGET_SPENT = 0.99
 EMOJI = {
     "headphone": "🎧", "earbud": "🎧", "headset": "🎧", "speaker": "🔊", "phone": "📱", "laptop": "💻", "keyboard": "⌨️",
     "mouse": "🖱️", "camera": "📷", "watch": "⌚", "tv": "📺", "lamp": "💡", "light": "💡", "chair": "🪑", "bed": "🛏️",
@@ -55,6 +54,8 @@ class Shop:
             (r.market, r.product_id): (text(r.title), text(r.brand), text(r.bullet_point)[:400])
             for r in frame.itertuples(index=False)
         }
+        # top sellers (the products purchase orders replenish) carry a Best Seller badge and many good reviews
+        self.best = {market: set(docs.tolist()) for market, docs in rt.pipeline.sim.top_products.items()}
 
     def _items(self, market: str, result: SearchResult) -> list[dict]:
         cat = self.rt.pipeline.sim.engine.catalogues[market]
@@ -64,26 +65,21 @@ class Shop:
         ):
             title, brand, bullet = self.info.get((market, pid), (pid, "", ""))
             h = zlib.crc32(pid.encode())
-            lowered = title.lower()
+            lowered, best = title.lower(), doc in self.best[market]
             items.append({
                 "id": pid, "doc": doc, "rank": rank, "title": title, "brand": brand, "bullet": bullet, "price": round(price, 2),
-                "stock": 0 if cat.delisted[doc] else int(cat.stock[doc]), "rating": round(3.3 + (h % 17) / 10, 1),
-                "reviews": int(10 ** (1 + ((h >> 8) % 300) / 100)), "fast": h % 3 == 0,
+                "stock": 0 if cat.delisted[doc] else int(cat.stock[doc]), "best": best,
+                "rating": round(4.4 + (h % 6) / 10, 1) if best else round(3.3 + (h % 13) / 10, 1),
+                "reviews": 2000 + (h >> 8) % 18000 if best else int(10 ** (1 + ((h >> 8) % 220) / 100)), "fast": h % 3 == 0,
                 "emoji": next((e for word, e in EMOJI.items() if word in lowered), "📦"),
             })  # fmt: skip
         return items
 
     def _campaign(self, market: str) -> dict:
         """Is the market's ad campaign still delivering today (budget left)?"""
-        now = self.rt.now
-        day = now.replace(hour=0, minute=0)
-        row = self.rt.db.df(
-            "SELECT sum(spend_eur) AS spent, max(budget_daily_eur) AS budget FROM ads_hourly WHERE market = ? AND ts >= ? AND ts < ?",
-            [market, day, now],
-        ).iloc[0]
-        budget = CAMPAIGNS[market][1] if pd.isna(row["budget"]) else float(row["budget"])
-        spent = 0.0 if pd.isna(row["spent"]) else float(row["spent"])
-        return {"spent": round(spent, 2), "budget": budget, "active": spent < BUDGET_SPENT * budget}
+        pacer, now = self.rt.pipeline.sim.pacer, self.rt.now
+        return {"spent": round(pacer.spent(market, now), 2), "budget": pacer.budget(market, now),
+                "active": pacer.delivering(market, now)}  # fmt: skip
 
     def _search(
         self, query: str, market: str, platform: str, filters: SearchFilters, limit: int
@@ -115,12 +111,14 @@ class Shop:
         result = self._search(query, market, platform, filters, FETCH)
         items = self._items(market, result)
         campaign = self._campaign(market)
-        self.rt.log_ux(
-            "search", market, platform, query, value=result.latency_ms, session=params.get("sid", "")
-        )
+        typed = params.get("auto") != "1"  # a tab that only refreshed itself is not a shopper action
+        log = partial(self.rt.log_ux, market=market, platform=platform, query=query, session=params.get("sid", ""))
+        if typed:
+            log("search", value=result.latency_ms)
         notes = []
         if result.zero_result:
-            self.rt.log_ux("zero_result", market, platform, query, session=params.get("sid", ""))
+            if typed:
+                log("zero_result")
             notes.append(
                 f"The {market} store accepts only its own language right now, so this search returned nothing."
                 if self.rt.pipeline.sim.faults.active(FOREIGN_LANGUAGE_BLOCKED, self.rt.now, market)
@@ -128,6 +126,8 @@ class Shop:
                 else "This search returned nothing."
             )
         if not campaign["active"]:
+            if typed:
+                log("no_sponsored")
             notes.append(
                 f"No sponsored product: the {market} ad campaign has spent its daily budget (EUR {campaign['spent']:.0f} of {campaign['budget']:.0f})."
             )
@@ -200,7 +200,9 @@ class Handler(BaseHTTPRequestHandler):
         if url.path in ("/api/home", "/api/search"):
             self.shop.rt.shop_market = params["market"]  # the journey page follows the store's "Deliver to"
         try:
-            if url.path == "/api/home":
+            if url.path == "/api/state":
+                self._json({"version": self.shop.rt.store_version(params["market"])})
+            elif url.path == "/api/home":
                 self._json(self.shop.home(params["market"]))
             elif url.path == "/api/search":
                 self._json(self.shop.search({"q": "", **params}))

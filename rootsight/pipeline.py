@@ -96,9 +96,16 @@ class Pipeline:
             for c in cases
             if c.kind == "failure"
         ]
-        events += self.incidents.close_stale(hour)
+        events += self.incidents.close_stale(hour, self._measured)
         self.now = hour + HOUR
         return StepResult(hour, cases, events)
+
+    def _measured(self, metric: str, segment: dict[str, str], hour: datetime) -> bool:
+        """Was there enough data in this hour to judge the metric? (A quiet night hour says nothing about a fault.)"""
+        if metric not in self.graph.specs:
+            return True
+        dims = self.graph.metric(metric).dims
+        return self.watcher.score_hour(metric, {k: v for k, v in segment.items() if k in dims}, hour) is not None
 
     def run_until(self, end: datetime) -> list[StepResult]:
         """Step until `now` reaches `end`."""

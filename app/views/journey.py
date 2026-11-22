@@ -16,15 +16,19 @@ st.markdown(
     "RootSight is told none of this. It has to notice each problem and trace it to its cause."
 )
 st.markdown(
-    '<div class="steps"><div class="step"><div class="n">1</div><b>Start the clock</b><span>One simulated hour passes every few seconds.</span></div>'
-    '<div class="step"><div class="n">2</div><b>Simulate a failure</b><span>Press "Simulate it" on a step below; the clock starts at one hour per second.</span></div>'
-    '<div class="step"><div class="n">3</div><b>Look as a shopper</b><span>"See it in the store" opens the shop on the broken search.</span></div>'
-    '<div class="step"><div class="n">4</div><b>Read the finding</b><span>Within 1-3 simulated hours the agent\'s report appears in the step.</span></div></div>',
+    '<div class="steps"><div class="step"><div class="n">1</div><b>Simulate a failure</b><span>Press "Simulate it" on the step below. The simulated clock starts and keeps running.</span></div>'
+    '<div class="step"><div class="n">2</div><b>Look as a shopper</b><span>"See it in the store" opens the shop on the broken search; what you do there is counted in the step.</span></div>'
+    '<div class="step"><div class="n">3</div><b>Read the finding</b><span>Within 1-3 simulated hours the agent\'s report appears in the step.</span></div>'
+    '<div class="step"><div class="n">4</div><b>End the simulation</b><span>"End Simulation" repairs the store, closes the incident and stops the clock.</span></div></div>',
     unsafe_allow_html=True,
 )
 controls(rt, "journey")
 ALL_STEPS = "All steps"
 steps = {f"Step {n} · {GUIDE[sid]['title']}": (n, sid) for n, sid in enumerate(JOURNEY, start=1)}
+options = [*steps, ALL_STEPS]
+# Streamlit forgets a widget's own state when you move to another page, so the chosen step is kept in a separate key;
+# a new browser session starts on Step 1.
+st.session_state.setdefault("journey_step_kept", options[0])
 
 
 @st.fragment(run_every=1)
@@ -33,7 +37,8 @@ def live() -> None:
     st.caption(f"{LANGUAGE_MARKETS[market]} (follows the store's Deliver to), last full hour")
     kpi_grid(rt, [("Orders", "orders"), ("Zero-result searches", "zero_result_rate"), ("Ad spend", "ad_spend"),
                   ("Top sellers in stock", "in_stock_rate_top"), ("Add-to-cart rate", "add_to_cart_rate")], {"market": market})  # fmt: skip
-    chosen = st.selectbox("Demo step", [ALL_STEPS, *steps], key="journey_step")
+    kept = options.index(st.session_state["journey_step_kept"])
+    chosen = st.session_state["journey_step_kept"] = st.selectbox("Demo step", options, index=kept, key="journey_step")
     for n, sid in steps.values() if chosen == ALL_STEPS else [steps[chosen]]:
         scenario_card(rt, sid, step=n, palette=palette)
 

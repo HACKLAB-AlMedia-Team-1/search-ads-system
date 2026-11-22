@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -12,6 +13,7 @@ import duckdb
 import pandas as pd
 
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
+CAPTURED_ROWS = 5
 
 
 def _literal(value: object) -> str:
@@ -44,18 +46,19 @@ class Database:
         self.execute(SCHEMA_FILE.read_text(encoding="utf-8"))
 
     @contextmanager
-    def capture(self) -> Iterator[list[str]]:
-        """Collect every query this thread runs inside the block (with parameters written in)."""
-        queries: list[str] = []
+    def capture(self) -> Iterator[list[dict]]:
+        """Collect every query this thread runs inside the block: the SQL (parameters written in) and its first rows."""
+        queries: list[dict] = []
         self._captured.queries = queries
         try:
             yield queries
         finally:
             self._captured.queries = None
 
-    def _record(self, sql: str, params: list | None) -> None:
+    def _record(self, sql: str, params: list | None, frame: pd.DataFrame) -> None:
         if (queries := getattr(self._captured, "queries", None)) is not None:
-            queries.append(inline_sql(sql, params))
+            queries.append({"sql": inline_sql(sql, params), "row_count": len(frame), "columns": [str(c) for c in frame.columns],
+                            "rows": json.loads(frame.head(CAPTURED_ROWS).to_json(orient="values", date_format="iso"))})  # fmt: skip
 
     def execute(self, sql: str, params: list | None = None) -> None:
         """Run a statement that returns nothing."""
@@ -64,9 +67,10 @@ class Database:
 
     def df(self, sql: str, params: list | None = None) -> pd.DataFrame:
         """Run a query and return the result as a DataFrame."""
-        self._record(sql, params)
         with self._lock:
-            return self._con.execute(sql, params or []).fetchdf()
+            frame = self._con.execute(sql, params or []).fetchdf()
+        self._record(sql, params, frame)
+        return frame
 
     def insert_df(self, table: str, frame: pd.DataFrame) -> None:
         """Append the rows of `frame` to `table` (columns matched by name)."""

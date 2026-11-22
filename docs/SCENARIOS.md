@@ -113,6 +113,9 @@ event_log:
 expected_root_cause: search-ranker v2.0.0   # used ONLY by tests, never shown to the agent
 ```
 
+`start` / `end` are used by the tests and `scripts/demo.py`. In the dashboard, **Simulate it** moves the scenario to the current simulated hour
+and ignores `end`: the fault lasts until **End Simulation** is pressed (only DQ1, one late hour by definition, keeps its length).
+
 ### User-written scenarios (*Add a scenario* page)
 
 `rootsight/sim/custom.py` maps a plain description onto one of the faults the simulator really produces (`FAULTS`: other-language search,

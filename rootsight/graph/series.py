@@ -8,7 +8,7 @@ from datetime import datetime
 import pandas as pd
 
 from rootsight.graph.graph import MetricSpec
-from rootsight.store.db import Database, inline_sql
+from rootsight.store.db import Database
 
 COLUMN_MAP = {"component_hourly": {"market": "scope"}}
 
@@ -42,11 +42,6 @@ def _query(
     if group:
         sql += f" GROUP BY {', '.join(group)} ORDER BY {', '.join(group)}"
     return sql, params
-
-
-def metric_sql(spec: MetricSpec, start: datetime, end: datetime, segment: Mapping[str, str] | None = None) -> str:
-    """The SQL that computes a metric over a window for a segment, with the values written in (for display)."""
-    return inline_sql(*_query(spec, start, end, segment, (), hourly=False))
 
 
 def _run(

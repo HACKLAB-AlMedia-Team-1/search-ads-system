@@ -29,8 +29,8 @@ with st.form("add_scenario"):
     checked = st.form_submit_button("Let the agent check it", type="primary")
 
 if checked:
-    with rt.lock:
-        draft = draft_scenario(rt.db, rt.pipeline.graph, rt.pipeline.llm, set(rt.scenarios), sid, title, what, where, shop, rt.now)
+    # read-only on the database, so it does not wait for the hour the simulation is working on
+    draft = draft_scenario(rt.db, rt.pipeline.graph, rt.pipeline.llm, set(rt.scenarios), sid, title, what, where, shop, rt.now)
     if draft.possible:
         st.session_state["scenario_draft"] = draft
     else:

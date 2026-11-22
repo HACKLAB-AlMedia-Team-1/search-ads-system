@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Callable, Mapping
+import re
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -16,7 +17,7 @@ from rootsight.agent.linkup import Linkup
 from rootsight.data.loaders import MARKETS
 from rootsight.engine.analyzers import analyze
 from rootsight.graph.graph import MetricGraph, MetricSpec
-from rootsight.graph.series import metric_sql, metric_total
+from rootsight.graph.series import metric_total
 from rootsight.monitor import calendar, completeness
 from rootsight.monitor.baseline import DAYS, denominator_spec
 from rootsight.monitor.watcher import Case, Watcher
@@ -25,6 +26,7 @@ from rootsight.sim.users import QueryPool
 from rootsight.store.db import Database
 
 MAX_ROWS = 10
+STEP_QUERIES = 4
 MAX_ONSET_HOURS = 12
 Z_ALARM = 3.0
 IMPACT_Z = 2.0
@@ -45,7 +47,26 @@ class Step:
     args: dict
     result: dict
     reasoning: str = ""
-    sql: list[str] = field(default_factory=list)
+    queries: list[dict] = field(default_factory=list)
+
+    @property
+    def sql(self) -> list[str]:
+        """The SQL text of every query the step ran."""
+        return [q["sql"] for q in self.queries]
+
+
+def query_name(sql: str, specs: Iterable[MetricSpec] = ()) -> str:
+    """A short name for a query: the metric it computes (else the table it reads), its segment and the hours it covers."""
+    table = re.search(r"\bFROM\s+\(?\s*([a-z_]+)", sql)
+    metric = next((s.name for s in specs if f"{s.parts()[0]} AS value FROM {s.parts()[1]} " in sql
+                   and (not s.parts()[2] or f"({s.parts()[2]})" in sql)), None)  # fmt: skip
+    by = re.search(r"GROUP BY (?:ts, )?([a-z_]+)", sql)
+    parts = [(metric or (table.group(1) if table else "query")) + (f" by {by.group(1)}" if by and by.group(1) != "ts" else "")]
+    parts += dict.fromkeys(re.findall(r"\b(?:market|platform|source|campaign_id|scope) = '([^']+)'", sql))
+    stamps = sorted({datetime.strptime(s, "%Y-%m-%d %H") for s in re.findall(r"TIMESTAMP '(\d{4}-\d\d-\d\d \d\d):", sql)})
+    if stamps:
+        parts.append(f"{stamps[0]:%d %b %H:00}" + (f" to {stamps[-1]:%d %b %H:00}" if len(stamps) > 1 else ""))
+    return " · ".join(parts)
 
 
 @dataclass
@@ -75,19 +96,24 @@ class Toolbox:
                 result = getattr(self, name)(**args)
             except (KeyError, ValueError, TypeError) as exc:
                 result = {"error": f"{type(exc).__name__}: {exc}"}
-        step = Step(len(self.trail) + 1, name, args, result, reasoning, self._step_sql(args, queries))
+        step = Step(len(self.trail) + 1, name, args, result, reasoning, self._step_queries(args, queries))
         self.trail.append(step)
         if self.on_step:
             self.on_step(step)
         return result
 
-    def _step_sql(self, args: dict, queries: list[str]) -> list[str]:
-        """The distinct queries a tool ran; metric tools that read cached history show the metric's own SQL instead."""
+    def _step_queries(self, args: dict, queries: list[dict]) -> list[dict]:
+        """The distinct queries a tool ran, named, with their first rows; metric tools that read cached history run the metric's own SQL."""
         metric = args.get("metric") or args.get("name")
-        if metric in self.graph.specs and not any(self.graph.metric(metric).parts()[1] in q for q in queries):
+        spec = self.graph.metric(metric) if metric in self.graph.specs else None
+        if spec and not any(spec.parts()[1] in q["sql"] for q in queries):
             start, end = self.window(args.get("hours") or args.get("window"))
-            queries = [metric_sql(self.graph.metric(metric), start, end, args.get("segment")), *queries]
-        return list(dict.fromkeys(q for q in queries if not q.startswith("SELECT ts FROM events WHERE event_id")))[:4]
+            with self.db.capture() as own:
+                metric_total(self.db, spec, start, end, args.get("segment"))
+            queries = [*own, *queries]
+        distinct = {q["sql"]: q for q in reversed(queries) if not q["sql"].startswith("SELECT ts FROM events WHERE event_id")}
+        specs = [*([spec] if spec else []), *self.graph.specs.values()]  # the step's own metric wins when two share an expression
+        return [{"name": query_name(q["sql"], specs), **q} for q in reversed(distinct.values())][:STEP_QUERIES]
 
     def _spec(self, name: str) -> MetricSpec:
         return self.graph.metric(name)

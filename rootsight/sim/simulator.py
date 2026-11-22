@@ -146,24 +146,47 @@ class Simulator:
                "received_at": ts if received else None}  # fmt: skip
         self.db.insert_df("purchase_orders", pd.DataFrame([row]))
 
+    @property
+    def late_supply(self) -> frozenset[str]:
+        """Markets whose top-seller delivery is overdue right now."""
+        return frozenset(self._late_supply)
+
     def _supply(self, ts: datetime) -> None:
         """Supplier deliveries for top sellers: while a delivery is late they stay sold out; on arrival they are restocked."""
         for market, top in self.top_products.items():
-            cat = self.engine.catalogues[market]
             if self.faults.active(fault_names.SUPPLIER_DELIVERY_LATE, ts, market):
                 if market not in self._late_supply:
                     self._late_supply.add(market)
                     self._purchase_order(ts, market, received=False)
-                cat.stock[top] = 0
+                self.engine.catalogues[market].stock[top] = 0
             elif market in self._late_supply:
-                self._late_supply.discard(market)
-                cat.stock[top] = UNITS_ORDERED
-                self.db.execute(
-                    "UPDATE purchase_orders SET qty_received = qty_ordered, received_at = ? WHERE market = ? AND received_at IS NULL",
-                    [ts, market],
-                )
+                self._deliver(ts, market)
             elif ts.hour == NIGHTLY_HOUR:
                 self._purchase_order(ts, market, received=True)
+
+    def _deliver(self, ts: datetime, market: str) -> None:
+        """The overdue delivery arrives: top sellers are back in stock and the purchase order is marked received."""
+        self._late_supply.discard(market)
+        self.engine.catalogues[market].stock[self.top_products[market]] = UNITS_ORDERED
+        self.db.execute(
+            "UPDATE purchase_orders SET qty_received = qty_ordered, received_at = ? WHERE market = ? AND received_at IS NULL",
+            [ts, market],
+        )
+
+    def restore(self, at: datetime) -> None:
+        """Put the shop back to normal right after a fault was stopped at `at`, without waiting for the next hour.
+
+        Overdue deliveries arrive, and a campaign that spent ahead of its plan gets the rest of today's budget back.
+        """
+        for market in [m for m in self._late_supply if not self.faults.active(fault_names.SUPPLIER_DELIVERY_LATE, at, m)]:
+            self._deliver(at, market)
+        planned = self.db.df(
+            "SELECT market, sum(planned_spend_eur) AS planned FROM ads_hourly WHERE ts >= ? AND ts < ? GROUP BY market",
+            [at.replace(hour=0, minute=0), at],
+        )
+        for market, so_far in zip(planned["market"], planned["planned"], strict=True):
+            if not self.faults.active(fault_names.AD_PACING_RUNAWAY, at, market):
+                self.pacer.back_on_plan(market, at, float(so_far))
 
     def _components(self, ts: datetime) -> list[dict]:
         mid = ts + timedelta(minutes=30)

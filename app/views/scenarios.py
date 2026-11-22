@@ -10,7 +10,8 @@ from widgets import scenario_card
 rt, palette = page()
 st.title("All scenarios")
 st.caption(
-    "Each card explains one situation in plain words. Start it, let the clock run, and compare what the agent reports with what it should find."
+    "Each card explains one situation in plain words. Press Simulate it, compare what the agent reports with what it should find, "
+    "then press End Simulation (a simulation never ends by itself)."
 )
 controls(rt, "scenarios")
 CUSTOM = tuple(sid for sid in custom_scenarios() if sid in rt.scenarios)

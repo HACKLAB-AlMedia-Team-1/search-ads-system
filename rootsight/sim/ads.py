@@ -24,6 +24,7 @@ CLICK_THROUGH_RATE = 0.02
 RUNAWAY_HOURLY_SHARE, RUNAWAY_PLAN_FACTOR = 0.10, 3.0
 CTR_JITTER = 0.05
 PUSH_BUDGET_FACTOR = 2.0
+BUDGET_SPENT = 0.99  # share of the daily budget after which the campaign stops delivering
 
 
 class AdPacer:
@@ -31,11 +32,31 @@ class AdPacer:
 
     def __init__(self) -> None:
         self._spent: dict[tuple[str, date], float] = {}
+        self._budget: dict[tuple[str, date], float] = {}
 
     def restore(self, ads_today: pd.DataFrame, day: date) -> None:
         """Re-load today's spend per campaign (used when the simulation resumes mid-day)."""
         for row in ads_today.itertuples():
             self._spent[(row.campaign_id, day)] = float(row.spend)
+
+    def budget(self, market: str, ts: datetime) -> float:
+        """The daily budget of the market's campaign on the day of `ts` (doubled during a campaign push)."""
+        campaign, base = CAMPAIGNS[market]
+        return self._budget.get((campaign, ts.date()), base)
+
+    def spent(self, market: str, ts: datetime) -> float:
+        """What the market's campaign has spent so far on the day of `ts`."""
+        return self._spent.get((CAMPAIGNS[market][0], ts.date()), 0.0)
+
+    def delivering(self, market: str, ts: datetime) -> bool:
+        """Does the market's campaign still have budget left on the day of `ts` (so the shop shows a sponsored product)?"""
+        return self.spent(market, ts) < BUDGET_SPENT * self.budget(market, ts)
+
+    def back_on_plan(self, market: str, ts: datetime, planned_so_far: float) -> None:
+        """After a pacing failure was fixed: count only the planned spend, so the rest of the day's budget is available again."""
+        key = (CAMPAIGNS[market][0], ts.date())
+        if key in self._spent:
+            self._spent[key] = min(self._spent[key], planned_so_far)
 
     def step(
         self, ts: datetime, market: str, weight: float, faults: FaultRegistry, rng: np.random.Generator
@@ -43,7 +64,7 @@ class AdPacer:
         """Spend, clicks and paid sessions of the market's campaign in the hour starting at `ts`."""
         campaign, base_budget = CAMPAIGNS[market]
         push = faults.active(fault_names.CAMPAIGN_PUSH, ts, market)
-        budget = base_budget * (PUSH_BUDGET_FACTOR if push else 1.0)
+        budget = self._budget[(campaign, ts.date())] = base_budget * (PUSH_BUDGET_FACTOR if push else 1.0)
         planned = budget * weight
         remaining = max(budget - self._spent.get((campaign, ts.date()), 0.0), 0.0)
         cpc = BASE_CPC * rng.uniform(1 - CPC_JITTER, 1 + CPC_JITTER)

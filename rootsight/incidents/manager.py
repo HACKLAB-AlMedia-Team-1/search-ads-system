@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from rootsight.agent.report import Report, render
+from rootsight.agent.report import Report, plain_summary, render
 from rootsight.graph.graph import MetricGraph
 from rootsight.monitor.watcher import Case
 from rootsight.store.db import Database
@@ -30,6 +30,12 @@ class Incident:
     metrics: set[str]
     notified_impact: float
     cause: str = ""
+    quiet_hours: int = 0  # hours in a row that were measured and raised no matching case
+
+    @property
+    def root_metric(self) -> str:
+        """The metric the incident was opened for (first part of the fingerprint)."""
+        return self.fingerprint.split("|")[0]
 
 
 @dataclass
@@ -58,6 +64,7 @@ class IncidentManager:
     def __init__(self, db: Database, graph: MetricGraph):
         self.db, self.graph = db, graph
         self._open: dict[int, Incident] = {}
+        self._fixed: set[int] = set()  # closed by a person; never reopened
         for r in db.df("SELECT * FROM incidents WHERE status = 'open'").itertuples():
             meta = json.loads(r.report_json)
             self._open[int(r.incident_id)] = Incident(int(r.incident_id), r.fingerprint, r.first_seen.to_pydatetime(), r.last_seen.to_pydatetime(),
@@ -90,7 +97,8 @@ class IncidentManager:
                 "AND cause_component <> '' AND segment_json = ? AND resolved_at >= ? ORDER BY incident_id DESC LIMIT 1",
                 [report.cause_component, json.dumps(report.scope), case.ts - REOPEN_WITHIN],
             )
-            if not earlier.empty:  # the same cause in the same place again: one problem, not two
+            if not earlier.empty and int(earlier["incident_id"].iloc[0]) not in self._fixed:
+                # the same cause in the same place again: one problem, not two
                 incident_id, old = (
                     int(earlier["incident_id"].iloc[0]),
                     json.loads(earlier["report_json"].iloc[0]),
@@ -146,7 +154,12 @@ class IncidentManager:
                 "report_json"
             ].iloc[0]
         )
-        meta = {**old, "metrics": sorted(incident.metrics), "notified_impact": incident.notified_impact}
+        before = Report(**old["report"])
+        report = before.model_copy(update={"impact": impact})  # the report keeps showing the cost so far, not the first hour's
+        if before.summary == plain_summary(before):
+            report.summary = plain_summary(report)
+        meta = {"metrics": sorted(incident.metrics), "notified_impact": incident.notified_impact,
+                "report": report.model_dump(mode="json")}  # fmt: skip
         self.db.execute(
             "UPDATE incidents SET last_seen = ?, impact_orders = ?, impact_revenue_eur = ?, wasted_ad_spend_eur = ?, report_json = ? WHERE incident_id = ?",
             [
@@ -159,14 +172,36 @@ class IncidentManager:
             ],
         )
 
-    def close_stale(self, hour: datetime) -> list[IncidentEvent]:
-        """Resolve incidents with no matching case for three hours."""
+    def close_stale(
+        self, hour: datetime, measured: Callable[[str, dict, datetime], bool] | None = None
+    ) -> list[IncidentEvent]:
+        """Resolve incidents after three normal hours without a matching case.
+
+        `measured(metric, segment, hour)` says whether the incident's metric had enough data to be judged in that
+        hour; an hour that could not be judged (a quiet night) is not counted as normal.
+        """
         events = []
-        for incident in [i for i in self._open.values() if hour - i.last_seen >= RESOLVE_AFTER]:
-            self.db.execute(
-                "UPDATE incidents SET status = ?, resolved_at = ? WHERE incident_id = ?",
-                [RESOLVED, incident.last_seen + timedelta(hours=1), incident.incident_id],
-            )
-            del self._open[incident.incident_id]
-            events.append(IncidentEvent("resolved", incident.incident_id))
+        for incident in list(self._open.values()):
+            if incident.last_seen >= hour:
+                incident.quiet_hours = 0
+            elif measured is None or measured(incident.root_metric, incident.segment, hour):
+                incident.quiet_hours += 1
+            if incident.quiet_hours * timedelta(hours=1) >= RESOLVE_AFTER:
+                self._resolve(incident.incident_id, incident.last_seen + timedelta(hours=1))
+                events.append(IncidentEvent("resolved", incident.incident_id))
         return events
+
+    def resolve(self, incident_id: int | None, at: datetime) -> None:
+        """A person fixed the cause: close the incident (None = every open one) now.
+
+        The same cause coming back later is a new incident, not this one reopened.
+        """
+        for one in [incident_id] if incident_id is not None else list(self._open):
+            self._resolve(one, at)
+            self._fixed.add(one)
+
+    def _resolve(self, incident_id: int, at: datetime) -> None:
+        self.db.execute(
+            "UPDATE incidents SET status = ?, resolved_at = ? WHERE incident_id = ?", [RESOLVED, at, incident_id]
+        )
+        self._open.pop(incident_id, None)

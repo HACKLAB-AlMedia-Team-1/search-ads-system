@@ -20,10 +20,12 @@ streamlit run app/Home.py            :: dashboard on :8501, and it starts the Sh
 
 The dashboard opens at http://localhost:8501 and starts the web shop at http://localhost:8600. Everything is local and free: no account, no API key.
 
-**Demo in three clicks:** on *Shopper journey* pick a step (or *All steps*) and press **Simulate it**. The clock starts at one simulated hour
-per second, the step's chart appears, and *What the agent found* shows live what the agent is doing (scoring, anomaly, case, checks)
-until its finding appears: a plain-language summary, the failed check (with the SQL, tables, expected and actual value), the
-*Possible next action*, and every investigation step with the SQL it ran. Open **See it in the store** to look as a shopper. *Reset demo* (sidebar) goes back to a clean state.
+**Demo in three clicks:** *Shopper journey* opens on Step 1; press **Simulate it**. The simulated clock starts (one hour every 2 seconds;
+Slow / Normal / Fast can be chosen) and keeps running, the step's chart appears, and *What the agent found* shows live what the agent is doing
+(scoring, anomaly, case, checks) until its finding appears: a plain-language summary, the cost so far, the failed check, the *Possible next action*,
+and every investigation step with its named queries (open one to see the SQL and the rows it returned). Open **See it in the store** to look as a
+shopper: the store tab refreshes itself, and what you do there is counted in the step's *Your store activity*. A simulation never ends by itself:
+press **End Simulation** to repair the store, close the incident and stop the clock. *Reset demo* (sidebar) goes back to a clean state.
 
 The journey: a shopper searches in the store's other language and gets nothing (English in Germany, German in the US), then the
 sponsored product is missing (the German €250/day ad budget burned by mid-morning), then the top sellers are out of stock (supplier delivery
@@ -60,7 +62,7 @@ words on *Add a scenario*: the agent maps it onto a failure the simulator can pr
 
 ```bat
 pytest -q                   :: fast suite (~3 min)
-pytest -m integration       :: full scenarios end to end (~3 min)
+pytest -m integration       :: full scenarios end to end (~6 min)
 ruff check .
 python scripts/smoke_ui.py  :: renders every Streamlit page headless
 ```

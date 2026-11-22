@@ -72,36 +72,44 @@ def where_text(scope: dict) -> str:
     return ", ".join(COUNTRY.get(v, v) for v in scope.values()) or "all traffic"
 
 
+def cost_parts(impact: dict) -> list[str]:
+    """Only the costs that apply (zeros are left out), each named in plain words."""
+    parts = []
+    if round(impact.get("lost_orders") or 0):
+        parts.append(f"about {impact['lost_orders']:,.0f} lost orders (€{impact.get('lost_revenue_eur') or 0:,.0f} revenue)")
+    if round(impact.get("wasted_ad_spend_eur") or 0):
+        parts.append(f"€{impact['wasted_ad_spend_eur']:,.0f} of ad spend that brought fewer sales than usual")
+    if round(impact.get("ad_spend_over_plan_eur") or 0):
+        parts.append(f"€{impact['ad_spend_over_plan_eur']:,.0f} of ad budget spent faster than planned (the budget ends early)")
+    return parts
+
+
 def plain_summary(report: Report) -> str:
     """One or two sentences a non-engineer understands, built only from numbers in the report."""
-    imp = report.impact
     what = PLAIN.get(report.cause_component, f"something is wrong: {report.cause}")
-    costs = []
-    if round(imp.get("lost_orders") or 0):
-        costs.append(f"about {imp['lost_orders']:,.0f} orders (€{imp.get('lost_revenue_eur') or 0:,.0f}) lost")
-    if round(imp.get("ad_spend_over_plan_eur") or 0):
-        costs.append(f"€{imp['ad_spend_over_plan_eur']:,.0f} of ads spent ahead of plan")
+    costs = cost_parts(report.impact)
     cost = f" So far: {' and '.join(costs)}." if costs else ""
     return f"In {where_text(report.scope)}, {what}.{cost}"
 
 
 def _step_with(tb: Toolbox, tool: str):
-    return next((s for s in reversed(tb.trail) if s.tool == tool and s.sql), None)
+    return next((s for s in reversed(tb.trail) if s.tool == tool and s.queries), None)
 
 
 def failed_check(tb: Toolbox, case: Case, component: str, metric: str) -> dict:
-    """The database check that failed: the SQL, its tables, what was expected, what came back and why it fails."""
+    """The database check that failed: the query (name, SQL, first rows), what was expected, what came back and why it fails."""
     po = _step_with(tb, "purchase_orders")
     late = [o for o in (po.result.get("orders", []) if po else []) if o["overdue"]]
     if component == "goods-receiving" and late:
         o = late[0]
-        return {"sql": po.sql[0], "tables": ["purchase_orders"], "expected": "qty_received >= qty_ordered once the order is due",
+        return {"query": po.queries[0], "sql": po.sql[0], "tables": ["purchase_orders"],
+                "expected": "qty_received >= qty_ordered once the order is due",
                 "got": f"{o['qty_received']:,} of {o['qty_ordered']:,} units received for {o['po_id']} (due {o['due']})",
                 "why": "The delivery is past its due date and nothing arrived, so the top sellers have no stock."}  # fmt: skip
     pacing = _step_with(tb, "ad_pacing")
     if component == "pacing-service" and pacing and pacing.result.get("budget_eur"):
         r = pacing.result
-        return {"sql": pacing.sql[0], "tables": ["ads_hourly"],
+        return {"query": pacing.queries[0], "sql": pacing.sql[0], "tables": ["ads_hourly"],
                 "expected": f"spend_eur follows planned_spend_eur so the €{r['budget_eur']:,.0f} daily budget lasts until 24:00",
                 "got": f"€{r['spent_eur']:,.0f} spent" + (f", budget used up at {r['budget_exhausted_at']}" if r["budget_exhausted_at"] else ""),
                 "why": "Spend runs far ahead of the plan, so the ads stop for the rest of the day."}  # fmt: skip
@@ -111,9 +119,9 @@ def failed_check(tb: Toolbox, case: Case, component: str, metric: str) -> dict:
     if anomaly is None or metric not in tb.graph.specs:
         return {}
     spec = tb.graph.metric(anomaly.metric)
-    step = next((s for s in reversed(tb.trail) if s.sql and anomaly.metric in json.dumps(s.args)), None)
-    sql = step.sql[0] if step else ""
-    return {"sql": sql, "tables": [spec.parts()[1].split()[0]],
+    step = next((s for s in reversed(tb.trail) if s.queries and anomaly.metric in json.dumps(s.args)), None)
+    query = step.queries[0] if step else {}
+    return {"query": query, "sql": query.get("sql", ""), "tables": [spec.parts()[1].split()[0]],
             "expected": f"{anomaly.metric} close to {fmt(anomaly.expected, spec.unit)} (normal for this hour and day)",
             "got": f"{fmt(anomaly.actual, spec.unit)} in {where_text(anomaly.segment)}",
             "why": f"The value is {abs(anomaly.z):.1f} standard deviations {'above' if anomaly.z > 0 else 'below'} normal; "
@@ -165,7 +173,7 @@ def build_report(tb: Toolbox, case: Case) -> Report:
                 "args": json.dumps(s.args)[:80],
                 "result": json.dumps(s.result)[:TRAIL_RESULT_CHARS],
                 "why": s.reasoning,
-                "sql": s.sql,
+                "queries": s.queries,
             }
             for s in tb.trail
         ],
@@ -187,10 +195,7 @@ def render(report: Report) -> str:
         f"_{report.headline}_",
         f"**Since:** {report.onset} | **Where:** {', '.join(f'{k}={v}' for k, v in report.scope.items()) or 'all traffic'} | **Status:** {report.status}",
         "",
-        (
-            f"**Impact so far ({imp['hours']} h):** {imp['lost_orders']} lost orders, EUR {imp['lost_revenue_eur']} lost revenue, "
-            f"EUR {imp['wasted_ad_spend_eur']} of ad spend wasted, EUR {imp['ad_spend_over_plan_eur']} spent above plan."
-        ),
+        f"**Cost so far ({imp['hours']} h):** {'; '.join(cost_parts(imp)) or 'no measurable cost yet'}.",
         f"**Likely cause:** {report.cause}",
         f"**Possible next action:** {report.next_action}",
         *([(f"**Failed check:** {report.failed_check['why']} Expected {report.failed_check['expected']}, got "

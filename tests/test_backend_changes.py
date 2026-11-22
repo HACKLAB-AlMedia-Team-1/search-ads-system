@@ -1,26 +1,71 @@
-"""Simulate-page backend: SQL shown to people, metric edits saved to YAML, user-written scenarios and the LLM rewrite guard."""
+"""Simulate-page backend: queries shown to people, the cost line, the ad budget after a fix, metric edits, user scenarios, LLM guard."""
 
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import numpy as np
 import yaml
 
 from rootsight.agent.narrate import narrate
-from rootsight.agent.report import Report
+from rootsight.agent.report import Report, cost_parts
+from rootsight.agent.tools import query_name
 from rootsight.graph.graph import DEFAULT_FILE, MetricGraph
 from rootsight.graph.onboarding import edit_metric
+from rootsight.sim.ads import AdPacer
 from rootsight.sim.custom import draft_scenario, save_scenario
-from rootsight.sim.faults import load_scenarios
+from rootsight.sim.faults import AD_PACING_RUNAWAY, Fault, FaultRegistry, load_scenarios
 from rootsight.store.db import inline_sql
 
 END = datetime(2026, 11, 21)
+DAY = timedelta(days=1)
 OFFLINE = SimpleNamespace(available=False)
 
 
 def test_inline_sql_writes_the_parameters_in():
     sql = inline_sql("SELECT * FROM t WHERE a = ? AND ts >= ? AND n > ?", ["O'Neil", datetime(2026, 11, 27, 9), 3])
     assert sql == "SELECT * FROM t WHERE a = 'O''Neil' AND ts >= TIMESTAMP '2026-11-27 09:00:00' AND n > 3"
+
+
+def test_captured_queries_keep_their_sql_and_first_rows(history_db):
+    with history_db.capture() as queries:
+        history_db.df("SELECT market, count(*) AS n FROM fact_hourly WHERE ts >= ? GROUP BY market ORDER BY market", [END - DAY])
+        history_db.df("SELECT ts FROM fact_hourly WHERE ts >= ? ORDER BY ts", [END - DAY])
+    per_market, hourly = queries
+    assert per_market["columns"] == ["market", "n"] and per_market["row_count"] == 4 and per_market["rows"][0][0] == "DE"
+    assert "TIMESTAMP '2026-11-20 00:00:00'" in per_market["sql"]
+    assert hourly["row_count"] > len(hourly["rows"]) == 5  # only the first rows are kept for display
+
+
+def test_query_names_say_metric_segment_and_hours():
+    specs = MetricGraph.load().specs
+    expr, table, _ = specs["zero_result_rate"].parts()
+    window = "ts >= TIMESTAMP '2026-11-21 09:00:00' AND ts < TIMESTAMP '2026-11-21 10:00:00'"
+    sql = f"SELECT {expr} AS value FROM {table} WHERE {window} AND market = 'DE'"
+    assert query_name(sql, specs.values()) == "zero_result_rate · DE · 21 Nov 09:00 to 21 Nov 10:00"
+    by_market = f"SELECT market AS market, {expr} AS value FROM {table} WHERE {window} GROUP BY market ORDER BY market"
+    assert query_name(by_market, specs.values()).startswith("zero_result_rate by market")
+    calendar = "SELECT * FROM calendar WHERE start_ts <= TIMESTAMP '2026-11-21 09:00:00' AND end_ts > TIMESTAMP '2026-11-21 09:00:00'"
+    assert query_name(calendar) == "calendar · 21 Nov 09:00"
+
+
+def test_the_cost_line_lists_only_what_applies():
+    nothing = {"hours": 1, "lost_orders": 0.0, "lost_revenue_eur": 0.0, "wasted_ad_spend_eur": 0.0, "ad_spend_over_plan_eur": 0.2}
+    assert cost_parts(nothing) == []
+    assert cost_parts({**nothing, "ad_spend_over_plan_eur": 25.2}) == ["€25 of ad budget spent faster than planned (the budget ends early)"]
+    lost = cost_parts({**nothing, "lost_orders": 12.4, "lost_revenue_eur": 340.0})
+    assert lost == ["about 12 lost orders (€340 revenue)"]
+
+
+def test_a_fixed_pacing_failure_gives_the_ad_budget_back():
+    pacer, faults, rng = AdPacer(), FaultRegistry(), np.random.default_rng(1)
+    faults.add(Fault(AD_PACING_RUNAWAY, END, None, {"market": "DE"}))
+    hours = [END + timedelta(hours=k) for k in range(12)]
+    planned = sum(pacer.step(ts, "DE", 1 / 24, faults, rng)["planned_spend_eur"] for ts in hours)
+    assert not pacer.delivering("DE", hours[-1])  # the runaway pacing burned the whole day's budget
+    faults.stop(AD_PACING_RUNAWAY, hours[-1])
+    pacer.back_on_plan("DE", hours[-1], planned)
+    assert pacer.delivering("DE", hours[-1]) and pacer.spent("DE", hours[-1]) == planned
 
 
 def test_editing_a_builtin_metric_rewrites_only_its_lines_in_metrics_yaml(history_db, tmp_path):
