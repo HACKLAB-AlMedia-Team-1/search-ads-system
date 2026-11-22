@@ -26,7 +26,7 @@ rt, palette = page()
 st.title("Incidents")
 st.caption(
     "One incident per problem. An ongoing problem updates its incident instead of creating new ones; "
-    "it closes when you press End Simulation, or by itself after three normal hours."
+    "the agent closes it after three normal hours (after End Simulation that takes a few seconds)."
 )
 frame = rt.db.df(f"SELECT {', '.join(COLUMNS)}, report_json FROM incidents ORDER BY incident_id DESC")
 if frame.empty:

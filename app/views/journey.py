@@ -16,10 +16,10 @@ st.markdown(
     "RootSight is told none of this. It has to notice each problem and trace it to its cause."
 )
 st.markdown(
-    '<div class="steps"><div class="step"><div class="n">1</div><b>Simulate a failure</b><span>Press "Simulate it" on the step below. The simulated clock starts and keeps running.</span></div>'
+    '<div class="steps"><div class="step"><div class="n">1</div><b>Simulate a failure</b><span>Monitoring is always live. "Simulate it" on the step below breaks the store until you end it.</span></div>'
     '<div class="step"><div class="n">2</div><b>Look as a shopper</b><span>"See it in the store" opens the shop on the broken search; what you do there is counted in the step.</span></div>'
     '<div class="step"><div class="n">3</div><b>Read the finding</b><span>Within 1-3 simulated hours the agent\'s report appears in the step.</span></div>'
-    '<div class="step"><div class="n">4</div><b>End the simulation</b><span>"End Simulation" repairs the store, closes the incident and stops the clock.</span></div></div>',
+    '<div class="step"><div class="n">4</div><b>End the simulation</b><span>"End Simulation" repairs the store; the agent sees the numbers recover and closes the incident.</span></div></div>',
     unsafe_allow_html=True,
 )
 controls(rt, "journey")

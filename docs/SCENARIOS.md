@@ -113,8 +113,19 @@ event_log:
 expected_root_cause: search-ranker v2.0.0   # used ONLY by tests, never shown to the agent
 ```
 
-`start` / `end` are used by the tests and `scripts/demo.py`. In the dashboard, **Simulate it** moves the scenario to the current simulated hour
-and ignores `end`: the fault lasts until **End Simulation** is pressed (only DQ1, one late hour by definition, keeps its length).
+`start` / `end` are used by the tests and `scripts/demo.py`. In the dashboard, monitoring is always live: the simulated clock starts when the
+dashboard loads and never pauses. **Simulate it** injects the scenario into the running stream at the current simulated hour and ignores
+`end`: the fault lasts until **End Simulation** is pressed (only DQ1, one late hour by definition, keeps its length). Every simulation
+starts from a normal shop: the ad budget is put back on plan at Simulate too.
+
+**End Simulation** only switches the fault off and repairs the store at once (search cache emptied, top sellers restocked, ad budget back
+on plan). It does not close the incident. Monitoring keeps running, so the agent sees the numbers recover and closes the incident itself
+after three normal hours that could be judged (quiet night hours with too few shoppers do not count). An incident whose cause was fixed
+with End Simulation is never reopened: the same failure simulated again is a new incident with a fresh report.
+
+Actions of a real person in the ShopLens store are added to the organic numbers of the simulated hour that is running (one action stands
+for 100 shoppers, at most a tenth of that hour's shoppers on the same device; the number of searches stays the same). Several empty searches in one simulated hour
+can therefore raise an alert even when no scenario is simulated.
 
 ### User-written scenarios (*Add a scenario* page)
 

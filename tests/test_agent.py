@@ -59,16 +59,16 @@ def test_planned_and_late_data_do_not_create_incidents(live):
     assert events_until(live, dq1 + 5 * H) == []
 
 
-def test_an_incident_closed_by_a_person_is_not_reopened(live):
+def test_an_incident_fixed_by_a_person_is_not_reopened(live):
     first, spec = datetime(2026, 11, 27, 8), live.scenarios["S3"]
     live.run_until(first)
     live.sim.activate(spec, at=first)
     opened = [e for e in events_until(live, first + 3 * H) if e.kind == "opened"]
     assert len(opened) == 1
     live.sim.stop_all(live.now)
-    live.incidents.resolve(opened[0].incident_id, live.now)  # what 'End Simulation' does
-    status = live.db.df("SELECT status FROM incidents WHERE incident_id = ?", [opened[0].incident_id])
-    assert status["status"].iloc[0] == "resolved"
+    live.incidents.fixed(opened[0].incident_id)  # what 'End Simulation' does
+    closed = [e.incident_id for e in events_until(live, live.now + 5 * H) if e.kind == "resolved"]
+    assert closed == [opened[0].incident_id]  # the agent sees the recovery and closes it itself
     live.sim.activate(spec, at=live.now)  # the same failure again is a new incident with a fresh report
     again = [e for e in events_until(live, live.now + 3 * H) if e.kind in ("opened", "reopened")]
     assert [e.kind for e in again] == ["opened"] and again[0].incident_id != opened[0].incident_id

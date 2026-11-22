@@ -130,8 +130,9 @@ def query_details(query: dict) -> str:
     body = "".join("<tr>" + "".join(f"<td>{html.escape(_cell(v))}</td>" for v in row) + "</tr>" for row in shown)
     more = f'<span class="more">first {len(shown)} of {total} rows</span>' if total > len(shown) else ""
     table = f"<table><tr>{head}</tr>{body}</table>{more}" if shown else '<span class="more">The query returned no rows.</span>'
-    return (f'<details class="query"><summary><code>{html.escape(query["name"])}</code><span>{total} row{"" if total == 1 else "s"}</span>'
-            f"</summary><pre>{html.escape(query['sql'])}</pre>{table}</details>")  # fmt: skip
+    return (f'<details class="query"><summary><span class="qname">{html.escape(query["name"])}</span>'
+            f'<span class="rows">{total} row{"" if total == 1 else "s"}</span></summary>'
+            f'<div class="sql">{html.escape(query["sql"])}</div>{table}</details>')  # fmt: skip
 
 
 def failed_check_rows(check: dict | None) -> str:
@@ -172,12 +173,12 @@ def report_card(report: dict, state: str | None = None) -> None:
             st.markdown("**Still uncertain**\n" + "\n".join(f"- {u}" for u in report["uncertain"]))
     with st.expander(f"How the agent investigated ({len(report['trail'])} steps)"):
         st.caption(
-            "Each step is one tool the agent used. Under it are the queries that tool ran: open one to see its SQL and the rows it returned."
+            "Each step is one tool the agent used, why, and what it found. Open the query under a step to see its SQL and the rows it returned."
         )
         st.markdown(
             "".join(
-                f'<div class="trail"><code>{s["n"]}. {s["tool"]}</code> {html.escape(s["why"])}<small>{html.escape(s["result"])}</small>'
-                f"{''.join(query_details(q) for q in s.get('queries') or [])}</div>"
+                f'<div class="trail"><b class="tool">{s["n"]}. {s["tool"]}</b> {html.escape(s["why"])}'
+                f'<span class="found">{html.escape(s.get("summary", ""))}</span>{query_details((s.get("queries") or [{}])[0])}</div>'
                 for s in report["trail"]
             ),
             unsafe_allow_html=True,
@@ -208,19 +209,26 @@ def _mark(fig: go.Figure, when: datetime, text: str, color: str) -> None:
 
 
 def step_chart(rt: Runtime, sid: str, palette: dict) -> None:
-    """The chart of a simulated step: L1 cumulative orders since Simulate, AD1 cumulative spend over the whole day (00-24 h)."""
+    """The chart of a simulated step: L1 share of searches that find products, AD1 cumulative spend over the whole day (00-24 h)."""
     fig = go.Figure(layout=_chart_layout(palette))
     since, ended = rt.started[sid], rt.ended.get(sid)
     grey, orange = {"dash": "dot", "color": "#8b93a1", "width": 2}, {"color": "#e47911", "width": 3}
     if sid == "L1":
-        frame = rt.orders_chart(sid)
+        frame, left = rt.search_chart(sid), rt.chart_start(sid)
         market = rt.broken_market.get(sid, rt.journey_market())
-        st.caption(f"Orders from {FAILING_LANGUAGE[market]} searches in {LANGUAGE_MARKETS[market]} since you pressed Simulate (cumulative)")
+        st.caption(
+            f"Searches that find products in {LANGUAGE_MARKETS[market]}, per hour ({FAILING_LANGUAGE[market]} searches find nothing while this "
+            "is broken). Your own searches in the store count too: one that finds products lifts the line, one that finds nothing pulls it down."
+        )
         if not frame.empty:
-            fig.add_trace(go.Scatter(x=[since, *frame["ts"]], y=[0, *frame["expected"]], line=grey, name="expected orders"))
-            fig.add_trace(go.Scatter(x=[since, *frame["ts"]], y=[0, *frame["received"]], line=orange, name="received orders"))
-        fig.update_xaxes(range=[since, max(since + timedelta(hours=8), ended or rt.now)])
-        fig.update_yaxes(rangemode="tozero")
+            fig.add_trace(go.Scatter(x=frame["ts"], y=frame["expected"], line=grey, name="normal for this hour"))
+            fig.add_trace(go.Scatter(x=frame["ts"], y=frame["found"], line=orange, name="searches that found products"))
+            fig.update_yaxes(range=[min(0.7, frame["found"].min() - 0.05), 1.01])
+        for when, text in ((since, "Simulate it"), (ended, "End Simulation")):
+            if when and when >= left:
+                _mark(fig, when, text, palette["muted"])
+        fig.update_xaxes(range=[left, max(left + timedelta(hours=18), rt.now)])
+        fig.update_yaxes(tickformat=".0%")
     elif sid in AD_CAMPAIGN:
         frame, day = rt.ads_chart(sid), rt.ads_day(sid)
         night = day + timedelta(days=1)
@@ -290,7 +298,9 @@ def scenario_card(rt: Runtime, sid: str, step: int | None = None, palette: dict 
         if finding:
             st.divider()
             st.markdown(f"**What the agent found** (incident #{finding['incident_id']})")
-            report_card(finding, finding["state"] if active else "resolved")
+            report_card(finding, finding["state"])
+            if not active and finding["state"] == "open":
+                st.caption("The failure is switched off. The agent closes the incident once it has seen three normal hours.")
         elif notices:
             st.success(
                 "No incident was opened. The agent only posted:  \n" + "  \n".join(f"- {n}" for n in notices)

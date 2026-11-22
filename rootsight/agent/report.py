@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from rootsight.agent.evidence import SUPPORTED, Evidence
 from rootsight.agent.tools import Z_ALARM, Toolbox
+from rootsight.graph.graph import MetricGraph
 from rootsight.monitor.watcher import Case
 
 NEXT_ACTIONS = {
@@ -21,7 +22,6 @@ NEXT_ACTIONS = {
     "goods-receiving": "Chase the supplier for the overdue delivery and mark the affected top sellers as back-ordered.",
     "pacing-service": "Roll back pacing-service and cap the hourly spend until the schedule logic is fixed.",
 }
-TRAIL_RESULT_CHARS = 180
 COUNTRY = {"DE": "Germany", "US": "the United States", "ES": "Spain", "JP": "Japan"}
 PLAIN = {
     "search-language": "shoppers who search in another language get no results, because only the local language is searched",
@@ -82,6 +82,73 @@ def cost_parts(impact: dict) -> list[str]:
     if round(impact.get("ad_spend_over_plan_eur") or 0):
         parts.append(f"€{impact['ad_spend_over_plan_eur']:,.0f} of ad budget spent faster than planned (the budget ends early)")
     return parts
+
+
+def _n(value: float | None) -> str:
+    return "no data" if value is None else f"{value:,.4g}"
+
+
+def step_summary(tool: str, result: dict, graph: MetricGraph) -> str:
+    """One plain line saying what a tool call found (shown to people instead of the raw answer)."""
+
+    def shown(metric: str, value: float | None) -> str:
+        return fmt(value, graph.metric(metric).unit) if metric in graph.specs else _n(value)
+
+    try:
+        if "error" in result:
+            return f"The tool could not answer: {result['error']}"
+        if tool == "get_metric":
+            if not result["hours"]:
+                return "No data for these hours."
+            last, onset = result["hours"][-1], result.get("onset")
+            since = f"; unusual since {onset[:16].replace('T', ' ')}" if onset else ""
+            metric = result["metric"]
+            return f"{metric} was {shown(metric, last['actual'])} in the latest hour against a normal {shown(metric, last['expected'])}{since}."
+        if tool in ("decompose", "drill_down"):
+            rows = result.get("factors") or result.get("segments")
+            if not rows:
+                return "The metric is measured directly; there is nothing to split."
+            top = rows[0]
+            what = top["factor"] if tool == "decompose" else f"{result['dimension']} = {top['value']}"
+            metric = top["factor"] if tool == "decompose" else result["metric"]
+            return (f"{what} explains {_n(top['share_pct'])}% of the change "
+                    f"({shown(metric, top['actual'])} against a normal {shown(metric, top['expected'])}).")  # fmt: skip
+        if tool == "get_events":
+            events = result["events"]
+            newest = f"; the newest is {events[0]['component']}: {events[0]['detail']}" if events else ""
+            return f"{len(events)} release, config or job changes in the window{newest}."
+        if tool == "check_completeness":
+            worst = min((h["ratio"] for h in result["hours"] if h["ratio"] is not None), default=None)
+            state = "has no arrival records" if worst is None else "arrived complete" if worst >= 0.99 else f"is only {worst:.0%} complete in the worst hour"
+            return f"The data of {result['table']} {state}."
+        if tool == "component_health":
+            return "; ".join(f"{h['metric']} is {_n(h['now'])} (normal {_n(h['normal'])})" for h in result["health"][:3]) + "."
+        if tool == "sample_searches":
+            empty = sum(s["zero_result"] for s in result["samples"])
+            return f"{len(result['samples'])} recent searches were looked at; {empty} of them found nothing."
+        if tool == "judge_relevance":
+            return f"{result['searches']} searches judged: {result['pattern']}."
+        if tool == "ad_pacing":
+            out = result["budget_exhausted_at"]
+            return f"€{_n(result['spent_eur'])} of the €{_n(result['budget_eur'])} daily budget is spent" + (f"; it ran out at {out}." if out else ".")
+        if tool == "purchase_orders":
+            late = [o for o in result["orders"] if o["overdue"]]
+            if not late:
+                return "Every purchase order arrived on time."
+            return f"{late[0]['po_id']} is overdue: nothing of the {late[0]['qty_ordered']:,} ordered units has arrived (due {late[0]['due']})."
+        if tool == "calendar_lookup":
+            names = ", ".join(e["name"] for e in result["entries"])
+            return f"Planned for this time: {names}." if names else "No planned event covers this time."
+        if tool == "record_hypothesis":
+            passed = sum(c["passed"] for c in result["checks"])
+            return f"{result['cause']}: {passed} of {len(result['checks'])} evidence checks passed."
+        if tool == "estimate_impact":
+            return f"Cost so far: {'; '.join(cost_parts(result)) or 'nothing measurable yet'}."
+        if tool == "graph_neighbors":
+            return f"Looked up what feeds into {result['metric']} and what it affects."
+    except (KeyError, IndexError, TypeError, ValueError):
+        pass
+    return ""
 
 
 def plain_summary(report: Report) -> str:
@@ -170,9 +237,8 @@ def build_report(tb: Toolbox, case: Case) -> Report:
             {
                 "n": s.n,
                 "tool": s.tool,
-                "args": json.dumps(s.args)[:80],
-                "result": json.dumps(s.result)[:TRAIL_RESULT_CHARS],
                 "why": s.reasoning,
+                "summary": step_summary(s.tool, s.result, tb.graph),
                 "queries": s.queries,
             }
             for s in tb.trail

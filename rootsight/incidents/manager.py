@@ -64,7 +64,7 @@ class IncidentManager:
     def __init__(self, db: Database, graph: MetricGraph):
         self.db, self.graph = db, graph
         self._open: dict[int, Incident] = {}
-        self._fixed: set[int] = set()  # closed by a person; never reopened
+        self._fixed: set[int] = set()  # cause fixed by a person; never reopened
         for r in db.df("SELECT * FROM incidents WHERE status = 'open'").itertuples():
             meta = json.loads(r.report_json)
             self._open[int(r.incident_id)] = Incident(int(r.incident_id), r.fingerprint, r.first_seen.to_pydatetime(), r.last_seen.to_pydatetime(),
@@ -191,14 +191,10 @@ class IncidentManager:
                 events.append(IncidentEvent("resolved", incident.incident_id))
         return events
 
-    def resolve(self, incident_id: int | None, at: datetime) -> None:
-        """A person fixed the cause: close the incident (None = every open one) now.
-
-        The same cause coming back later is a new incident, not this one reopened.
-        """
-        for one in [incident_id] if incident_id is not None else list(self._open):
-            self._resolve(one, at)
-            self._fixed.add(one)
+    def fixed(self, incident_id: int) -> None:
+        """A person fixed the cause. The incident still closes by itself once the numbers are normal again,
+        but the same cause coming back later is a new incident, not this one reopened."""
+        self._fixed.add(incident_id)
 
     def _resolve(self, incident_id: int, at: datetime) -> None:
         self.db.execute(

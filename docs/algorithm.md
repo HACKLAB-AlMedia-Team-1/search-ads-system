@@ -3,6 +3,12 @@
 RootSight runs one loop per simulated hour: **simulate -> score -> group -> investigate -> track**.
 Statistics and the evidence checklist are code. A language model is optional and only chooses which tool to call next.
 
+In the dashboard this loop runs all the time: one simulated hour every 1-3 real seconds, from the moment the dashboard loads. It never pauses.
+Actions of a real person in the ShopLens store are added to the organic numbers of the hour being simulated, for that country and device.
+One action stands for 100 shoppers, but at most a tenth of that hour's shoppers on the same device. The number of searches stays the same:
+an empty search moves that crowd from "found products" to "found nothing", a search with results moves a crowd the other way.
+The simulated night (01:00-06:59) is passed without waiting, and a failure started at night switches on at 07:00.
+
 ## 1. What to monitor
 
 - Every hour: the top KPIs (orders, revenue, search CTR, ROAS, ad spend, pacing, zero-result rate) and the component health
@@ -56,7 +62,10 @@ An event is rejected when its component is not connected to the metric in the gr
 Fingerprint = `root metric | segment | cause component`. Open -> ongoing -> resolved (after 3 normal hours).
 Only hours in which the incident's metric could be judged count as normal: a night hour with too few shoppers says nothing, so the incident stays open.
 A person is re-notified only when the money impact grows by more than 50% or the scope widens. The report's cost is refreshed with every matching case.
-When a person fixes the cause (*End Simulation* in the dashboard) the incident is closed at once; the same cause coming back later is a new incident.
+When a person fixes the cause (*End Simulation* in the dashboard: the fault is switched off and the store repaired) nobody closes the incident by hand.
+Monitoring keeps running, the agent sees the numbers recover and closes it after three normal hours that could be judged, like any other incident.
+The same cause coming back within 24 hours normally reopens the incident. A fixed incident is the exception: it is never reopened, so the same
+cause coming back later is a new incident with a fresh report (`IncidentManager.fixed`).
 
 ## 7. Adding a metric
 

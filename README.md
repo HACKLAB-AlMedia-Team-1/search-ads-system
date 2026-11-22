@@ -20,12 +20,17 @@ streamlit run app/Home.py            :: dashboard on :8501, and it starts the Sh
 
 The dashboard opens at http://localhost:8501 and starts the web shop at http://localhost:8600. Everything is local and free: no account, no API key.
 
-**Demo in three clicks:** *Shopper journey* opens on Step 1; press **Simulate it**. The simulated clock starts (one hour every 2 seconds;
-Slow / Normal / Fast can be chosen) and keeps running, the step's chart appears, and *What the agent found* shows live what the agent is doing
-(scoring, anomaly, case, checks) until its finding appears: a plain-language summary, the cost so far, the failed check, the *Possible next action*,
-and every investigation step with its named queries (open one to see the SQL and the rows it returned). Open **See it in the store** to look as a
-shopper: the store tab refreshes itself, and what you do there is counted in the step's *Your store activity*. A simulation never ends by itself:
-press **End Simulation** to repair the store, close the incident and stop the clock. *Reset demo* (sidebar) goes back to a clean state.
+**Monitoring is always live.** The simulated clock starts by itself when the dashboard loads (one hour every 2 seconds; *Clock speed* offers
+Slow / Normal / Fast) and never pauses: there is no start or stop button. The healthy shop runs all the time, so the tiles and charts keep updating.
+
+**Demo in three clicks:** *Shopper journey* opens on Step 1; press **Simulate it**. The failure is injected into the running stream, the step's
+chart appears, and *What the agent found* shows live what the agent is doing (scoring, anomaly, case, checks) until its finding appears:
+a plain-language summary, the cost so far, the failed check, the *Possible next action*, and every investigation step with the tool it used,
+why, one sentence with what it found and one collapsed query (open it to see the SQL and the rows it returned). Open **See it in the store**
+to look as a shopper: the store tab refreshes itself, and what you do there counts in the monitored numbers (one action of yours stands for
+100 shoppers) and is listed in the step's *Your store activity*. A simulation never ends by itself: press **End Simulation** to switch the
+failure off and repair the store. Monitoring keeps running, so the agent sees the numbers recover and closes the incident itself after three
+normal hours. Everything goes back to the clean 14 days in two cases only: the app is started again, or *Reset demo* (sidebar) is pressed.
 
 The journey: a shopper searches in the store's other language and gets nothing (English in Germany, German in the US), then the
 sponsored product is missing (the German €250/day ad budget burned by mid-morning), then the top sellers are out of stock (supplier delivery
@@ -43,6 +48,7 @@ words on *Add a scenario*: the agent maps it onto a failure the simulator can pr
 | ~116k Amazon products, real EN/ES/JP queries and relevance labels (ESCI). The German store is a demo: US products with word-by-word translated queries | Users, sessions, clicks, carts, orders |
 | A real BM25 search engine with per-language analyzers; the failures are real bugs in it | Ads: 3 campaigns, EUR 1,000/day, pacing |
 | Statistics, the metric graph, the evidence checklist, incident tracking | Release / config / job event log (with harmless decoys), prices, stock |
+| Your own actions in the ShopLens store: they are added to the monitored numbers (one action stands for 100 shoppers) | Shop pictures (drawn in code as SVG, no photos), sold counts, ratings, review counts, list prices and discounts: made up, fixed per product |
 
 ## Scenarios
 

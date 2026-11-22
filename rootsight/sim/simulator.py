@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -29,6 +30,12 @@ RESTOCK_BELOW, RESTOCK_RANGE = 5, (50, 151)
 NIGHTLY_HOUR = 3
 SOLD_OUT_CHURN, DELIST_RATE, RELIST_RATE, PRICE_CHANGE_RATE = 0.04, 0.005, 0.25, 0.08
 TOP_QUERIES, UNITS_NEEDED, UNITS_ORDERED, PO_LEAD_DAYS = 100, 100, 120, 3
+# One action of the real person at the store stands for 100 shoppers, but never more than a tenth of that hour's
+# shoppers on the same device (and at least 1): clearly visible, yet the simulated crowd still decides the picture.
+SHOPPER_WEIGHT, SHOPPER_SHARE, SHOPPER_MIN = 100, 0.10, 1
+SHOPPER_COLUMNS = ("results_total", "searches_with_click", "clicks_top3", "sum_relevance10", "sum_ndcg10", "sum_first_exact_pos",
+                   "carts", "cart_unavailable_errors", "price_mismatch_clicks", "checkouts", "orders", "revenue_eur",
+                   "sum_click_position", "refinements", "bounces")  # fmt: skip
 
 
 class Simulator:
@@ -41,6 +48,7 @@ class Simulator:
         self.traffic = traffic
         self.pacer = AdPacer()
         self._pending: dict[datetime, tuple[datetime, pd.DataFrame]] = {}
+        self._shopper: Counter = Counter()
         self._late_supply: set[str] = set()
         self.top_products = {
             market: np.flatnonzero(
@@ -105,7 +113,42 @@ class Simulator:
             ad["paid_orders"] = sum(r["orders"] for r in paid)
             ad["paid_revenue_eur"] = sum(r["revenue_eur"] for r in paid)
             ads.append(ad)
+        self._count_shopper(facts)
         self._store(ts, pd.DataFrame(facts), pd.DataFrame(ads), pd.DataFrame(samples), event_rows)
+
+    def shopper_action(self, event: str, market: str, platform: str, value: float = 0.0) -> None:
+        """Remember one action of the real person at the store; it is counted in the hour being simulated next."""
+        self._shopper[(market, platform, event)] += 1
+        if event == "checkout":
+            self._shopper[(market, platform, "revenue")] += value
+
+    def _count_shopper(self, facts: list[dict]) -> None:
+        """Count the real person's store actions in this hour's organic rows, each one standing for a crowd of shoppers.
+
+        The number of searches stays the same (no traffic spike): a search of the person that found nothing means a
+        crowd of this hour's shoppers found nothing too, a search that found products means a crowd that would have
+        found nothing found products instead. What successful searchers do (clicks, carts, orders) follows in
+        proportion. Cart and order actions add carts and orders.
+        """
+        pending, self._shopper = self._shopper, Counter()
+        for row in facts:
+            did = lambda event, row=row: pending.get((row["market"], row["platform"], event), 0)
+            if row["source"] != "organic" or not any(key[:2] == (row["market"], row["platform"]) for key in pending):
+                continue
+            crowd = min(SHOPPER_WEIGHT, max(SHOPPER_MIN, SHOPPER_SHARE * row["searches"]))
+            empty, found = did("zero_result"), max(did("search") - did("zero_result"), 0)
+            ok = row["searches"] - row["zero_result_searches"]
+            lost = max(-row["zero_result_searches"], min(ok, crowd * (empty - found)))  # searchers who now find nothing
+            if ok > 0:
+                for column in SHOPPER_COLUMNS:
+                    row[column] *= (ok - lost) / ok
+            row["zero_result_searches"] += lost
+            row["bounces"] = max(row["bounces"] + lost, 0.0)
+            row["carts"] += crowd * did("add_to_cart")
+            row["cart_unavailable_errors"] += crowd * did("cart_unavailable")
+            row["checkouts"] += crowd * did("checkout")
+            row["orders"] += crowd * did("checkout")
+            row["revenue_eur"] += crowd * pending.get((row["market"], row["platform"], "revenue"), 0.0)
 
     def _store(
         self,

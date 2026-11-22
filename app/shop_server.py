@@ -13,11 +13,13 @@ from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
+from pictures import product_picture
 
 from rootsight.data.german import wrong_language
 from rootsight.engine.search import SearchFilters, SearchResult
 from rootsight.sim.ads import CAMPAIGNS
 from rootsight.sim.faults import FOREIGN_LANGUAGE_BLOCKED
+from rootsight.sim.simulator import TOP_QUERIES
 
 if TYPE_CHECKING:
     from common import Runtime
@@ -28,16 +30,14 @@ STATIC = Path(__file__).with_name("shop")
 TYPES = {".html": "text/html", ".css": "text/css", ".js": "text/javascript"}
 PLATFORMS = ("web", "android", "ios")
 FETCH, HOME_ROW = 40, 6
-EMOJI = {
-    "headphone": "🎧", "earbud": "🎧", "headset": "🎧", "speaker": "🔊", "phone": "📱", "laptop": "💻", "keyboard": "⌨️",
-    "mouse": "🖱️", "camera": "📷", "watch": "⌚", "tv": "📺", "lamp": "💡", "light": "💡", "chair": "🪑", "bed": "🛏️",
-    "sofa": "🛋️", "shoe": "👟", "sneaker": "👟", "boot": "🥾", "sandal": "🩴", "sock": "🧦", "shirt": "👕", "dress": "👗",
-    "jacket": "🧥", "coat": "🧥", "hat": "🧢", "glove": "🧤", "bag": "👜", "backpack": "🎒", "glasses": "🕶️", "ring": "💍",
-    "toy": "🧸", "game": "🎮", "puzzle": "🧩", "book": "📚", "pen": "🖊️", "knife": "🔪", "cup": "☕", "mug": "☕",
-    "bottle": "🧴", "coffee": "☕", "dog": "🐶", "cat": "🐱", "car": "🚗", "bike": "🚲", "ball": "⚽", "tent": "⛺",
-    "plant": "🪴", "flower": "💐", "christmas": "🎄", "gift": "🎁", "candle": "🕯️", "clock": "🕰️", "guitar": "🎸",
-    "battery": "🔋", "tool": "🧰", "soap": "🧼", "brush": "🪥", "umbrella": "☂️", "baby": "🍼", "kitchen": "🍳",
-}  # fmt: skip
+SOLD_STEPS = (5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000)
+DISCOUNTS = (10, 15, 20, 30)
+
+
+def units_sold(product_id: str, best: bool) -> int:
+    """Units sold shown in the shop (made up, the same on every visit): thousands for top sellers, under 900 otherwise."""
+    h = zlib.crc32(product_id.encode()) >> 4
+    return 1000 + h % 19000 if best else 5 + h % 900
 
 
 class Shop:
@@ -47,15 +47,24 @@ class Shop:
         self.rt = rt
         frame = pd.read_parquet(
             rt.settings.data_processed_dir / "products.parquet",
-            columns=["market", "product_id", "title", "brand", "bullet_point"],
+            columns=["market", "product_id", "title", "brand", "bullet_point", "color"],
         )
         text = lambda value: value if isinstance(value, str) else ""
         self.info = {
-            (r.market, r.product_id): (text(r.title), text(r.brand), text(r.bullet_point)[:400])
+            (r.market, r.product_id): (text(r.title), text(r.brand), text(r.bullet_point)[:400], text(r.color))
             for r in frame.itertuples(index=False)
         }
-        # top sellers (the products purchase orders replenish) carry a Best Seller badge and many good reviews
-        self.best = {market: set(docs.tolist()) for market, docs in rt.pipeline.sim.top_products.items()}
+        # Top sellers = the products that exactly match the most searched queries (purchase orders replenish them).
+        # Each is ranked inside its query by units sold, so the shop can say "#1 Best Seller in <query>".
+        sim = rt.pipeline.sim
+        self.best: dict[str, dict[int, tuple[int, str]]] = {}
+        for market, index in sim.engine.indexes.items():
+            doc_of = {pid: doc for doc, pid in enumerate(index.product_ids)}
+            ranks = self.best.setdefault(market, {})
+            for query, products in sim.funnel.pool.top_exact_by_query(market, TOP_QUERIES).items():
+                known = sorted((p for p in products if p in doc_of), key=lambda p: -units_sold(p, True))
+                for rank, pid in enumerate(known, start=1):
+                    ranks.setdefault(doc_of[pid], (rank, query))
 
     def _items(self, market: str, result: SearchResult) -> list[dict]:
         cat = self.rt.pipeline.sim.engine.catalogues[market]
@@ -63,15 +72,19 @@ class Shop:
         for rank, (doc, pid, price) in enumerate(
             zip(result.doc_idx, result.product_ids, result.prices, strict=True), start=1
         ):
-            title, brand, bullet = self.info.get((market, pid), (pid, "", ""))
+            title, brand, bullet, colour = self.info.get((market, pid), (pid, "", "", ""))
             h = zlib.crc32(pid.encode())
-            lowered, best = title.lower(), doc in self.best[market]
+            best_rank, best_in = self.best[market].get(doc, (None, None))
+            best, sold = best_rank is not None, units_sold(pid, best_rank is not None)
+            off = DISCOUNTS[(h >> 3) % len(DISCOUNTS)] if h % 4 == 0 else 0
             items.append({
                 "id": pid, "doc": doc, "rank": rank, "title": title, "brand": brand, "bullet": bullet, "price": round(price, 2),
-                "stock": 0 if cat.delisted[doc] else int(cat.stock[doc]), "best": best,
+                "stock": 0 if cat.delisted[doc] else int(cat.stock[doc]), "best": best, "best_rank": best_rank, "best_in": best_in,
+                "sold": f"{max(s for s in SOLD_STEPS if s <= sold):,}+", "units": sold,
                 "rating": round(4.4 + (h % 6) / 10, 1) if best else round(3.3 + (h % 13) / 10, 1),
-                "reviews": 2000 + (h >> 8) % 18000 if best else int(10 ** (1 + ((h >> 8) % 220) / 100)), "fast": h % 3 == 0,
-                "emoji": next((e for word, e in EMOJI.items() if word in lowered), "📦"),
+                "reviews": max(sold // 6, 3), "fast": h % 3 == 0, "off": off,
+                "was": round(price / (1 - off / 100), 2) if off else None,
+                "picture": product_picture(title, colour, brand, pid),
             })  # fmt: skip
         return items
 
@@ -99,7 +112,9 @@ class Shop:
             }
             for q in popular[:2]
         ]
-        return {"popular": popular, "rows": rows}
+        found = {i["doc"]: i for q in popular[:6] for i in self._items(market, self._search(q, market, "web", SearchFilters(), FETCH))}
+        best = sorted((i for i in found.values() if i["best"] and i["stock"] > 0), key=lambda i: (i["best_rank"], -i["units"]))
+        return {"popular": popular, "rows": rows, "best": best[:HOME_ROW]}
 
     def search(self, params: dict[str, str]) -> dict:
         """Search results plus the sponsored slot and plain-language notes about anything unusual."""
@@ -165,9 +180,12 @@ class Shop:
         """Check live stock of every cart item before the order is placed; sold-out items block the order."""
         market, platform = body["market"], body.get("device", "web")
         cat = self.rt.pipeline.sim.engine.catalogues[market]
-        unavailable = [int(d) for d in body.get("docs", []) if cat.stock[int(d)] <= 0 or cat.delisted[int(d)]]
+        docs, session = [int(d) for d in body.get("docs", [])], str(body.get("sid", ""))[:40]
+        unavailable = sorted({d for d in docs if cat.stock[d] <= 0 or cat.delisted[d]})
         if unavailable:
-            self.rt.log_ux("cart_unavailable", market, platform, session=str(body.get("sid", ""))[:40])
+            self.rt.log_ux("cart_unavailable", market, platform, session=session)
+        elif docs:
+            self.rt.log_ux("checkout", market, platform, value=round(float(sum(cat.price[d] for d in docs)), 2), session=session)
         return {"ok": not unavailable, "unavailable": unavailable}
 
 

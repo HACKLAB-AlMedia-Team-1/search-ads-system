@@ -31,10 +31,17 @@ class QueryPool:
             for (m, q), g in labels.groupby(["market", "query_id"])
         }
 
+    def top_exact_by_query(self, market: str, n_queries: int) -> dict[str, list[str]]:
+        """The `n_queries` most searched queries (most searched first), each with its products labelled Exact."""
+        top = self._by_market[market].nlargest(n_queries, "weight")
+        return {
+            query: [p for p, label in self.labels.get((market, query_id), {}).items() if label == "E"]
+            for query_id, query in zip(top["query_id"], top["query"], strict=True)
+        }
+
     def top_exact_products(self, market: str, n_queries: int) -> set[str]:
         """Products labelled Exact for the `n_queries` most searched queries: the shop's top sellers."""
-        top = self._by_market[market].nlargest(n_queries, "weight")["query_id"]
-        return {p for q in top for p, label in self.labels.get((market, q), {}).items() if label == "E"}
+        return {p for products in self.top_exact_by_query(market, n_queries).values() for p in products}
 
     def popular(self, market: str, n: int) -> list[str]:
         """The `n` most frequent queries of a market (for suggestion chips)."""

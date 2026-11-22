@@ -26,7 +26,7 @@ from rootsight.sim.users import QueryPool
 from rootsight.store.db import Database
 
 MAX_ROWS = 10
-STEP_QUERIES = 4
+STEP_QUERIES = 1  # the step's main query is kept (SQL and first rows) for the report
 MAX_ONSET_HOURS = 12
 Z_ALARM = 3.0
 IMPACT_Z = 2.0

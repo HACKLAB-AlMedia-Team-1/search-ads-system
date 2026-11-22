@@ -24,7 +24,6 @@ from rootsight.logging_setup import setup_logging
 from rootsight.pipeline import Pipeline
 from rootsight.sim.clock import HOUR
 from rootsight.sim.faults import Scenario, load_scenarios
-from rootsight.sim.users import FOREIGN_SHARE
 from rootsight.store.db import Database
 
 logger = logging.getLogger(__name__)
@@ -39,6 +38,8 @@ DEFAULT_SPEED = "Normal"
 FAILING_LANGUAGE = {"DE": "English", "US": "German"}  # L1: the language that finds nothing in each country
 AD_CAMPAIGN = {"AD1": "CMP-DE"}
 NEVER = timedelta(days=3650)  # a simulation started from the UI runs until 'End Simulation', never by itself
+NIGHT_HOURS, MORNING_HOUR = range(1, 7), 7  # 01:00-06:59 simulated time is passed without waiting
+CHART_LEAD_HOURS, CHART_HOURS = 6, 72  # the step 1 chart: hours shown before Simulate, and at most in total
 ONE_OFF = ("DQ1",)  # one late hour by definition: the delay keeps its length, the simulation still runs until it is ended
 STORE_EVENTS = {"search": "Your searches", "zero_result": "Found nothing", "no_sponsored": "No sponsored product",
                 "cart_unavailable": "Could not add to cart", "add_to_cart": "Added to cart", "checkout": "Orders placed"}  # fmt: skip
@@ -68,11 +69,14 @@ class Runtime:
         self._points: dict[tuple, dict | None] = {}
         self._latest: dict[tuple, dict | None] = {}
         self._wanted: set[tuple] = set()
+        self._history: dict[tuple, int] = {}
+        self._normal_found: dict[str, dict[int, float]] = {}
         try:
             self.shop = start_shop(self, SHOP_PORT)
         except OSError:
             self.shop = None
             logger.warning("Port %d is in use; the web shop was not started", SHOP_PORT)
+        self.start()  # monitoring is live from the moment the dashboard loads
 
     @property
     def now(self) -> datetime:
@@ -92,7 +96,8 @@ class Runtime:
                     break
                 self.pipeline.step()
                 self._score_wanted()
-            self._wake.wait(self.seconds_per_hour)
+            if self.now.hour not in NIGHT_HOURS:  # nights have too few shoppers to judge anything: pass them quickly
+                self._wake.wait(self.seconds_per_hour)
             self._wake.clear()
 
     def start(self) -> None:
@@ -128,13 +133,16 @@ class Runtime:
             if sid in FOLLOWS_STORE:
                 self.broken_market[sid] = self.journey_market()
                 scenario = scenario.for_market(self.broken_market[sid])
-            scenario = scenario.shifted(self.now)
+            # at night there are too few shoppers to notice anything: the failure then starts with the morning
+            start = self.now.replace(hour=MORNING_HOUR) if self.now.hour in NIGHT_HOURS else self.now
+            scenario = scenario.shifted(start)
             if sid not in ONE_OFF:
                 calendar = tuple({**c, "end_ts": c["start_ts"] + NEVER} for c in scenario.calendar)
                 scenario = replace(scenario, end=None, calendar=calendar)
+            self.pipeline.sim.restore(self.now)  # every simulation starts from a normal shop (ad budget on plan)
             self.pipeline.sim.activate(scenario)
             self.pipeline.sim.engine.cache.clear()  # no result cached before the change may be served after it
-            self.started[sid] = self.now
+            self.started[sid] = start
             self.ended.pop(sid, None)
             self.wall[sid] = (datetime.now(), None)
             self.changes += 1
@@ -144,23 +152,18 @@ class Runtime:
         self.scenarios.update(load_scenarios(path.parent, path.name))
 
     def simulate(self, sid: str) -> None:
-        """Switch a scenario on and run the clock (at the chosen speed) until 'End Simulation' is pressed."""
+        """Switch a scenario on in the live stream; it stays on until 'End Simulation' is pressed."""
         self.inject(sid)
         self.start()
 
     def end_simulation(self, sid: str | None = None) -> None:
-        """End one running scenario (or all): fault off, store back to normal, its incident resolved.
+        """End one running scenario (or all): the fault is switched off and the store is back to normal at once.
 
-        The clock stops as soon as no simulation is running any more.
+        Monitoring keeps running, so the agent sees the numbers recover and closes the incident itself.
         """
         with self.lock:
             for one in [sid] if sid else self.active():
                 self._end(one)
-            if not self.active():
-                self.running = False  # the worker checks this before every hour
-                self.pipeline.incidents.resolve(None, self.now)  # nothing is broken any more: no incident stays open
-        if not self.running:
-            self.pause()
 
     def _end(self, sid: str) -> None:
         scenario, sim = self.scenarios[sid], self.pipeline.sim
@@ -171,9 +174,8 @@ class Runtime:
             )
         sim.restore(self.now)  # late deliveries arrive, the ad budget is back on plan
         sim.engine.cache.clear()
-        found = self.finding(sid)
-        if found and found["state"] == "open":
-            self.pipeline.incidents.resolve(found["incident_id"], self.now)
+        if found := self.finding(sid):
+            self.pipeline.incidents.fixed(found["incident_id"])  # simulated again later, it is a new incident
         self.ended[sid] = self.now
         if sid in self.wall:
             self.wall[sid] = (self.wall[sid][0], datetime.now())
@@ -182,7 +184,8 @@ class Runtime:
     def store_version(self, market: str) -> str:
         """Changes whenever the store would look different (Simulate / End pressed, ad budget used up, delivery late)."""
         sim = self.pipeline.sim
-        return f"{self.changes}.{int(sim.pacer.delivering(market, self.now))}.{int(market in sim.late_supply)}"
+        faults = len(sim.faults.active_names(self.now))  # a failure pressed at night switches on with the morning
+        return f"{self.changes}.{faults}.{int(sim.pacer.delivering(market, self.now))}.{int(market in sim.late_supply)}"
 
     def store_activity(self, sid: str) -> dict[str, int]:
         """What the person at the store did since Simulate was pressed (until End): searches, empty results, cart, orders."""
@@ -220,6 +223,8 @@ class Runtime:
         if since is None:
             return []
         hours = int((self.now - since) / HOUR)
+        if hours < 0:
+            return [f"It is night in the simulation (too few shoppers to notice anything): the failure starts at {since:%H:%M}."]
         lines = [f"Hour {hours} since the fault started: the agent scores every metric each simulated hour."]
         market = self.broken_market.get(sid) or self.scenarios[sid].scope.get("market", "all")
         anomaly = self.db.df(
@@ -251,23 +256,29 @@ class Runtime:
         latest = f"'{last['tool']}' ({last['reasoning'] or 'gathering evidence'})"
         return [*lines, f"Investigating case {case['case_id'].iloc[0]}: {len(steps)} checks so far, latest {latest}."]
 
-    def orders_chart(self, sid: str) -> pd.DataFrame:
-        """L1 since Simulate, per closed hour: cumulative expected and received orders from searches in the failing language."""
-        since, market = self.started.get(sid), self.broken_market.get(sid, self.journey_market())
-        rows, expected, received = [], 0.0, 0.0
-        if since is None:
-            return pd.DataFrame(rows)
-        faults, fault = self.pipeline.sim.faults, self.scenarios[sid].fault
-        for k in range(int((self.ended.get(sid, self.now) - since) / HOUR)):
-            hour = since + HOUR * k
-            p = self._known("orders", {"market": market}, hour)
-            if p is None:
-                continue
-            share = FOREIGN_SHARE * p["expected"]
-            expected += share
-            received += 0.0 if faults.active(fault, hour, market) else share  # blocked searches show nothing to buy
-            rows.append({"ts": hour + HOUR, "expected": expected, "received": received})
-        return pd.DataFrame(rows)
+    def search_chart(self, sid: str) -> pd.DataFrame:
+        """L1 per closed hour: share of searches that found products in the broken country, and the normal share for that hour.
+
+        Shows a few hours before Simulate up to now, so the drop, the person's own searches and the recovery are all visible.
+        """
+        market = self.broken_market.get(sid, self.journey_market())
+        if market not in self._normal_found:
+            clean = self.db.df(
+                "SELECT hour(ts) AS h, 1 - sum(zero_result_searches) / nullif(sum(searches), 0) AS found FROM fact_hourly "
+                "WHERE market = ? AND ts < ? GROUP BY 1",
+                [market, self.settings.demo_day_start],
+            )
+            self._normal_found[market] = dict(zip(clean["h"], clean["found"], strict=True))
+        frame = self.db.df(
+            "SELECT ts, 1 - sum(zero_result_searches) / nullif(sum(searches), 0) AS found FROM fact_hourly "
+            "WHERE market = ? AND ts >= ? AND ts < ? GROUP BY ts ORDER BY ts",
+            [market, self.chart_start(sid), self.now],
+        )
+        return frame.assign(expected=frame["ts"].dt.hour.map(self._normal_found[market]), ts=frame["ts"] + HOUR)
+
+    def chart_start(self, sid: str) -> datetime:
+        """Left edge of the step 1 chart: a few hours before Simulate, but never more than three days back."""
+        return max(self.started[sid] - HOUR * CHART_LEAD_HOURS, self.now - HOUR * CHART_HOURS)
 
     def ads_day(self, sid: str) -> datetime:
         """Midnight of the simulated day the AD1 chart shows: the current day, or the day the simulation was ended."""
@@ -281,8 +292,10 @@ class Runtime:
             "AND ts >= ? AND ts < ? ORDER BY ts",
             [AD_CAMPAIGN[sid], day, min(self.ended.get(sid, self.now), day + HOUR * 24)],
         )
-        return frame.assign(ts=frame["ts"] + HOUR, spend=frame["spend_eur"].cumsum(),
-                            planned=frame["planned_spend_eur"].cumsum())  # fmt: skip
+        # every simulation starts from a campaign that is on plan: hours before Simulate count as planned,
+        # so an earlier simulation on the same day does not carry its overspend into this one
+        counted = frame["spend_eur"].where(frame["ts"] >= self.started[sid], frame["planned_spend_eur"])
+        return frame.assign(ts=frame["ts"] + HOUR, spend=counted.cumsum(), planned=frame["planned_spend_eur"].cumsum())
 
     def notices(self, sid: str) -> list[str]:
         """Info cards (planned event, data delay) raised since an innocent scenario was started."""
@@ -305,16 +318,17 @@ class Runtime:
         value: float = 0.0,
         session: str = "",
     ) -> None:
-        """Record one real storefront interaction (search, click, add to cart, ...) for the UX panel."""
+        """Record one real storefront interaction (search, click, add to cart, ...) and count it in the simulated hour."""
         row = {"ts": datetime.now(), "session_id": session, "market": market, "platform": platform, "event": event,
                "query": query, "position": position, "value": value}  # fmt: skip
         self.db.insert_df("ux_events", pd.DataFrame([row]))
+        self.pipeline.sim.shopper_action(event, market, platform, value)
 
     def point(self, metric: str, segment: dict, hour: datetime) -> dict | None:
         """Actual, expected, spread and z of a metric for a closed hour (cached per hour).
 
         The page never computes while the simulation is advancing (that made the screen wait and slowed the
-        simulation down): the worker fills in the newest hour for every series a page has asked for, and until
+        simulation down): the worker fills in the hours for every series a page has asked for, and until
         then the last known value is shown.
         """
         series = (metric, tuple(sorted(segment.items())))
@@ -334,12 +348,15 @@ class Runtime:
         self._latest.clear()
 
     def _score_wanted(self) -> None:
-        """After an hour is simulated: score that hour for every series the pages show (called with the lock held)."""
-        hour = self.now - HOUR
+        """After an hour is simulated: score it for every series the pages show (called with the lock held).
+
+        Series drawn as a chart also get their earlier hours filled in once, because monitoring never pauses.
+        """
         for metric, segment in list(self._wanted):
-            self._points[(metric, segment, hour)] = self.pipeline.watcher.score_hour(
-                metric, dict(segment), hour
-            )
+            for k in range(1, self._history.get((metric, segment), 1) + 1):
+                key = (metric, segment, self.now - HOUR * k)
+                if key not in self._points:
+                    self._points[key] = self.pipeline.watcher.score_hour(metric, dict(segment), key[2])
 
     def _known(self, metric: str, segment: dict, hour: datetime) -> dict | None:
         """The value for exactly this hour, or None if it is not known yet (the chart adds it on a later refresh)."""
@@ -349,6 +366,7 @@ class Runtime:
     def band(self, metric: str, segment: dict | None = None, hours: int = 36) -> pd.DataFrame:
         """Hourly actual with the expected band for the last `hours` closed hours."""
         rows = []
+        self._history[(metric, tuple(sorted((segment or {}).items())))] = hours
         for k in range(hours, 0, -1):
             hour = self.now - HOUR * k
             p = self._known(metric, segment or {}, hour)
@@ -396,11 +414,11 @@ def reset_demo() -> None:
 
 
 def controls(rt: Runtime, key: str) -> None:
-    """Speed of a running simulation. The clock itself only runs between 'Simulate it' and 'End Simulation'."""
+    """Speed of the simulated clock. Monitoring itself is always live; there is no start or stop button."""
     current = min(SPEEDS, key=lambda name: abs(SPEEDS[name] - rt.seconds_per_hour))
     labels = {name: f"{name} ({seconds:.0f} s)" for name, seconds in SPEEDS.items()}
     choice = st.segmented_control(
-        "Simulation speed (real seconds per simulated hour)", list(SPEEDS), default=current, format_func=labels.get,
+        "Clock speed (real seconds per simulated hour)", list(SPEEDS), default=current, format_func=labels.get,
         key=f"{key}_speed",
     )  # fmt: skip
     rt.seconds_per_hour = SPEEDS[choice or current]
@@ -410,7 +428,7 @@ def controls(rt: Runtime, key: str) -> None:
 def _status(rt: Runtime) -> None:
     active = rt.active()
     faults = "".join(f"<br>● {sid}: {rt.scenarios[sid].name}" for sid in active) or "<br>none"
-    clock = "running" if rt.running else "stopped"
+    clock = "live" if rt.running else "stopped"
     st.markdown(
         f'<div class="side-status"><span class="muted">Simulated time ({clock})</span><br><b>{rt.now:%a %d %b, %H:%M}</b>'
         f'<br><span class="muted">Running simulations</span>{faults}</div>',
@@ -432,7 +450,8 @@ def page() -> tuple[Runtime, dict[str, str]]:
         st.link_button("🛒 Open the ShopLens store", SHOP_URL, width="stretch")
         with st.popover("Reset demo", width="stretch"):
             st.write(
-                "Removes every incident and injected fault and goes back to the 14 clean days of history."
+                "Removes every incident and running simulation and goes back to the 14 clean days of history. "
+                "Scenarios you wrote and metric edits are kept."
             )
             if st.button("Reset now", type="primary"):
                 reset_demo()
