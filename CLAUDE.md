@@ -31,6 +31,8 @@ Then state in 3–5 bullets: current phase, what is already done, what you will 
 - During development and in all tests use `LLM_MODE=offline` and `LINKUP_MODE=offline`.
 - Never run anything with `LLM_MODE=live|record` or `LINKUP_MODE=live` unless the human says so in this session.
 - Every LLM call goes through `rootsight/agent/llm.py` (one place handles modes, caching, recording and token logging).
+  Current callers: the investigator (`agent` model), `agent/narrate.py` (plain-language finding, `fast` model) and
+  `sim/custom.py` (reading user-written scenarios, `fast` model). Each has a rule-based fallback, so offline must keep working.
 - Never print or log API keys. Keys come only from `.env` via `rootsight/config.py`.
 
 ## 4. How to work
@@ -56,6 +58,9 @@ Then state in 3–5 bullets: current phase, what is already done, what you will 
 - Data files: raw in `data/raw/` (read-only, never modify), processed in `data/processed/`, database `data/rootsight.duckdb`.
 - **Numbers in reports must come from tool results.** The LLM never computes or invents numbers.
 - The 4-point evidence checklist is computed **in code** (`rootsight/agent/evidence.py`), not judged by the LLM.
+- LLM-written wording is dropped if it contains a number that is not in the tool results (`agent/narrate.py`).
+- Editing a built-in metric in the UI rewrites only its `description:` / `sql:` lines in `rootsight/graph/metrics.yaml`;
+  tests must edit a temporary copy (`edit_metric(..., builtin_file=tmp)`), never the real file.
 - Log in plain English with the `logging` module; no print statements in package code.
 - Tests must run offline in < 60 s total (use a small sample of the data).
 

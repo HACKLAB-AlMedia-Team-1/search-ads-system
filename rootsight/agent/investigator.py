@@ -8,6 +8,7 @@ from pathlib import Path
 
 from rootsight.agent import offline_policy
 from rootsight.agent.llm import LLMClient, LLMUnavailable
+from rootsight.agent.narrate import narrate
 from rootsight.agent.report import Report, build_report
 from rootsight.agent.tools import Step, Toolbox
 from rootsight.config import Settings
@@ -155,7 +156,7 @@ class Investigator:
                 offline_policy.investigate(self.tb, case)
         else:
             offline_policy.investigate(self.tb, case)
-        return build_report(self.tb, case)
+        return narrate(build_report(self.tb, case), self.llm, self.tb.end)
 
     def _run_llm(self, case: Case) -> None:
         brief = {"case_id": case.case_id, "hour": case.ts.isoformat(), "headline": case.headline, "root_metric": case.root_metric,

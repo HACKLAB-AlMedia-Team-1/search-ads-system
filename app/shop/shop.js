@@ -117,7 +117,7 @@ function renderResults() {
       <div class="pic" data-open="${d.sponsored.doc}">${d.sponsored.emoji}</div>
       <div><div class="tag">${tx.sponsored}</div><div class="title" data-open="${d.sponsored.doc}">${esc(d.sponsored.title)}</div>
         <div class="stars">${stars(d.sponsored.rating)}<small>${d.sponsored.reviews.toLocaleString()}</small></div>${priceHtml(d.sponsored.price)}</div>
-      <button class="buy" data-add="${d.sponsored.doc}">${tx.add}</button></section>` : "";
+      <button class="buy" data-add="${d.sponsored.doc}" ${d.sponsored.stock <= 0 ? "disabled" : ""}>${d.sponsored.stock <= 0 ? tx.unavailable : tx.add}</button></section>` : "";
   const body = items.length ? `<div class="grid">${items.map(i => cardHtml(i)).join("")}</div>`
     : `<div class="empty"><h2>${tx.noResults} “${esc(state.q)}”</h2><p>${tx.noHint}</p></div>`;
   $("main").innerHTML = `<div class="results">${filters}<section>
@@ -174,7 +174,7 @@ async function addToCart(doc) {
   const answer = await api("/api/cart", { market: state.market, device: state.device, doc: item.doc, price: item.price, rank: item.rank, query: state.q, sid: state.sid });
   if (!answer.ok) return toast(t().sorry, true);
   if (answer.changed) toast(t().priceChanged(answer.price.toFixed(2)), true); else toast(t().added);
-  state.cart.push({ title: item.title, price: answer.price });
+  state.cart.push({ doc: item.doc, title: item.title, price: answer.price });
   renderCart();
 }
 
@@ -213,7 +213,13 @@ $("search-form").addEventListener("submit", event => { event.preventDefault(); s
 $("logo").addEventListener("click", event => { event.preventDefault(); search(""); });
 $("cart-btn").addEventListener("click", () => ($("drawer").hidden = false));
 $("drawer-close").addEventListener("click", () => ($("drawer").hidden = true));
-$("checkout").addEventListener("click", () => { track("checkout"); state.cart = []; renderCart(); $("drawer").hidden = true; toast(t().ordered); });
+$("checkout").addEventListener("click", async () => {
+  const answer = await api("/api/checkout", { market: state.market, device: state.device, docs: state.cart.map(i => i.doc), sid: state.sid });
+  if (!answer.ok) {  // an item sold out after it was added: it leaves the cart and the order is not placed
+    state.cart = state.cart.filter(i => !answer.unavailable.includes(i.doc)); renderCart(); return toast(t().sorry, true);
+  }
+  track("checkout"); state.cart = []; renderCart(); $("drawer").hidden = true; toast(t().ordered);
+});
 $("t-top").addEventListener("click", event => { event.preventDefault(); window.scrollTo({ top: 0, behavior: "smooth" }); });
 document.addEventListener("keydown", event => { if (event.key === "Escape") { $("modal").hidden = true; $("drawer").hidden = true; } });
 

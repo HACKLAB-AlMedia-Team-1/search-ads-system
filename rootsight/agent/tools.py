@@ -16,7 +16,7 @@ from rootsight.agent.linkup import Linkup
 from rootsight.data.loaders import MARKETS
 from rootsight.engine.analyzers import analyze
 from rootsight.graph.graph import MetricGraph, MetricSpec
-from rootsight.graph.series import metric_total
+from rootsight.graph.series import metric_sql, metric_total
 from rootsight.monitor import calendar, completeness
 from rootsight.monitor.baseline import DAYS, denominator_spec
 from rootsight.monitor.watcher import Case, Watcher
@@ -45,6 +45,7 @@ class Step:
     args: dict
     result: dict
     reasoning: str = ""
+    sql: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -69,15 +70,24 @@ class Toolbox:
 
     def call(self, name: str, args: dict, reasoning: str = "") -> dict:
         """Run a tool by name; errors become `{"error": ...}` so one bad call never stops an investigation."""
-        try:
-            result = getattr(self, name)(**args)
-        except (KeyError, ValueError, TypeError) as exc:
-            result = {"error": f"{type(exc).__name__}: {exc}"}
-        step = Step(len(self.trail) + 1, name, args, result, reasoning)
+        with self.db.capture() as queries:
+            try:
+                result = getattr(self, name)(**args)
+            except (KeyError, ValueError, TypeError) as exc:
+                result = {"error": f"{type(exc).__name__}: {exc}"}
+        step = Step(len(self.trail) + 1, name, args, result, reasoning, self._step_sql(args, queries))
         self.trail.append(step)
         if self.on_step:
             self.on_step(step)
         return result
+
+    def _step_sql(self, args: dict, queries: list[str]) -> list[str]:
+        """The distinct queries a tool ran; metric tools that read cached history show the metric's own SQL instead."""
+        metric = args.get("metric") or args.get("name")
+        if metric in self.graph.specs and not any(self.graph.metric(metric).parts()[1] in q for q in queries):
+            start, end = self.window(args.get("hours") or args.get("window"))
+            queries = [metric_sql(self.graph.metric(metric), start, end, args.get("segment")), *queries]
+        return list(dict.fromkeys(q for q in queries if not q.startswith("SELECT ts FROM events WHERE event_id")))[:4]
 
     def _spec(self, name: str) -> MetricSpec:
         return self.graph.metric(name)

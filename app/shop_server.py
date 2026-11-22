@@ -136,7 +136,7 @@ class Shop:
             notes.append(f"{sold_out} of the first 10 results are out of stock.")
         if result.cache_hit and result.result_age_min >= 5:
             notes.append(f"These results come from a cache and are {result.result_age_min:.0f} minutes old.")
-        sponsored = next((i for i in items if i["stock"] > 0), None) if campaign["active"] else None
+        sponsored = items[0] if campaign["active"] and items else None  # shown even when sold out; its Add button is then disabled
         return {"query": query, "total": result.total_matches, "latency_ms": round(result.latency_ms), "items": items,
                 "sponsored": sponsored, "notes": notes}  # fmt: skip
 
@@ -160,6 +160,15 @@ class Shop:
             self.rt.log_ux("price_mismatch", **common)
         self.rt.log_ux("add_to_cart", value=price, **common)
         return {"ok": True, "price": price, "changed": changed}
+
+    def checkout(self, body: dict) -> dict:
+        """Check live stock of every cart item before the order is placed; sold-out items block the order."""
+        market, platform = body["market"], body.get("device", "web")
+        cat = self.rt.pipeline.sim.engine.catalogues[market]
+        unavailable = [int(d) for d in body.get("docs", []) if cat.stock[int(d)] <= 0 or cat.delisted[int(d)]]
+        if unavailable:
+            self.rt.log_ux("cart_unavailable", market, platform, session=str(body.get("sid", ""))[:40])
+        return {"ok": not unavailable, "unavailable": unavailable}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -212,6 +221,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "unknown market"}, 400)
             elif self.path == "/api/cart":
                 self._json(self.shop.add_to_cart(body))
+            elif self.path == "/api/checkout":
+                self._json(self.shop.checkout(body))
             elif self.path == "/api/event":
                 device = body.get("device") if body.get("device") in PLATFORMS else "web"
                 self.shop.rt.log_ux(

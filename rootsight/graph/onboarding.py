@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -14,7 +14,7 @@ import yaml
 from sqlglot import exp
 
 from rootsight.agent.llm import LLMClient, LLMUnavailable
-from rootsight.graph.graph import MetricGraph, MetricSpec
+from rootsight.graph.graph import CAUSAL_TYPES, DEFAULT_FILE, MetricGraph, MetricSpec
 from rootsight.graph.series import metric_series
 from rootsight.store.db import Database
 
@@ -210,3 +210,67 @@ def _append_yaml(path: Path, result: OnboardingResult) -> None:
     }  # fmt: skip
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
+
+
+def edit_metric(
+    db: Database, graph: MetricGraph, name: str, description: str, sql: str, end: datetime,
+    custom_file: Path | None = None, builtin_file: Path = DEFAULT_FILE,
+) -> OnboardingResult:  # fmt: skip
+    """Change the description and SQL of an existing metric (built-in or added), re-check its links and save it to its YAML file."""
+    result = OnboardingResult(None, {})
+    if name not in graph.specs:
+        result.problems.append(f"'{name}' is not a metric in the graph")
+        return result
+    try:
+        result.parsed = parse_sql(sql)
+        spec = replace(graph.metric(name), description=description, sql=sql)
+        test = metric_series(db, spec, end - timedelta(days=VALIDATION_DAYS), end)
+    except Exception as exc:  # noqa: BLE001 - any parse/SQL error is shown to the user instead of crashing the UI
+        result.problems.append(f"the SQL does not run on the history: {exc}")
+        return result
+    if test["value"].notna().sum() < 24:
+        result.problems.append("the SQL returns almost no values over the last 7 days")
+        return result
+    if missing := [d for d in spec.dims if d not in db.df(f"SELECT * FROM {spec.parts()[1]} LIMIT 0").columns]:
+        result.problems.append(f"the new SQL's table has no column for the dimensions {missing} this metric is split by")
+        return result
+    graph.specs[name] = spec
+    graph._upstream_cache.clear()
+    g = graph.graph
+    for source, target in [(u, v) for u, v, d in g.in_edges(name, data=True) if d["type"] in CAUSAL_TYPES] + [
+        (u, v) for u, v, d in g.out_edges(name, data=True) if d["type"] in CAUSAL_TYPES
+    ]:  # fmt: skip
+        p = Proposal("may_be_caused_by", source, target, 1.0, "existing link")
+        p.r = _correlation(db, graph, spec, p, end)
+        p.status = "validated" if p.r is not None and abs(p.r) >= MIN_R else "ambiguous"
+        result.proposals.append(p)
+    db.execute("INSERT INTO metric_registry VALUES (?, ?, ?, ?, ?)", [name, description, sql, end, "edited"])
+    if _in_yaml(builtin_file, name):
+        _rewrite_builtin(builtin_file, name, description, sql)
+    elif custom_file and _in_yaml(custom_file, name):
+        body = yaml.safe_load(custom_file.read_text(encoding="utf-8"))
+        body["metrics"][name].update({"description": description, "sql": sql})
+        custom_file.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
+    result.spec, result.added = spec, True
+    return result
+
+
+def _in_yaml(path: Path, name: str) -> bool:
+    return path.is_file() and name in ((yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("metrics") or {})
+
+
+def _rewrite_builtin(path: Path, name: str, description: str, sql: str) -> None:
+    """Replace only the `description:` and `sql:` lines of one metric, so the file's comments and layout stay."""
+    lines, inside = path.read_text(encoding="utf-8").splitlines(keepends=True), False
+    for i, line in enumerate(lines):
+        if re.match(r"^  \S", line):
+            inside = line.strip() == f"{name}:"
+        elif inside and line.startswith("    description:"):
+            lines[i] = f"    description: {json.dumps(description, ensure_ascii=False)}\n"
+        elif inside and line.startswith("    sql:"):
+            lines[i] = f"    sql: {json.dumps(sql, ensure_ascii=False)}\n"
+    text = "".join(lines)
+    saved = yaml.safe_load(text)["metrics"][name]
+    if (saved["description"], saved["sql"]) != (description, sql):
+        raise ValueError(f"could not update {name} in {path.name}")
+    path.write_text(text, encoding="utf-8")

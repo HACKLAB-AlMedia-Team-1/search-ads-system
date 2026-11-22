@@ -220,6 +220,12 @@ class Watcher:
         self._cache[key] = (frame, end)
         return frame
 
+    def forget_cache(self) -> None:
+        """Rebuild the per-table metric expressions after a metric's SQL changed."""
+        self._plain = (-1, {})
+        self._cache.clear()
+        self._universe = self._build_universe()
+
     def _plain_exprs(self) -> dict[str, dict[str, str]]:
         """Per table: sql -> expression of every metric (and its volume) that is a plain aggregate of that table."""
         if self._plain[0] != len(self.graph.specs):

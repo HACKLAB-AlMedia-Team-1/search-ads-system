@@ -16,6 +16,7 @@ in € of wasted ad spend.
 | ID | Name (list #) | Tier | Where it hits | Event-log entry the agent should find |
 |----|---------------|------|---------------|----------------------------------------|
 | **S1** | Search algorithm failure (#1) | **Must** (headline) | All markets, all platforms | `release search-ranker v2.0.0` |
+| **L1** | Foreign-language searches fail (journey step 1) | **Must** | DE or US (the store's country) | `config search-language[DE] = local only` |
 | **S12** | Regional search failure (#12) | **Must** | ES market only | `config search-analyzer[ES] = english` |
 | **S3** | Mobile search failure (#3) | **Must** | Android only | `release android-app 5.2.0` |
 | **AD1** | Ad budget pacing anomaly | **Must** | One campaign (ES) | `deploy pacing-service 1.4.0` |
@@ -111,3 +112,13 @@ event_log:
   - {ts: "2026-11-24T13:55:00", type: release, component: search-ranker, detail: "v2.0.0 rolled out 100%"}
 expected_root_cause: search-ranker v2.0.0   # used ONLY by tests, never shown to the agent
 ```
+
+### User-written scenarios (*Add a scenario* page)
+
+`rootsight/sim/custom.py` maps a plain description onto one of the faults the simulator really produces (`FAULTS`: other-language search,
+local-language analyzer, irrelevant ranker, recency boost, Android empty results, partial index, stale cache, ad pacing, late supplier
+delivery). The fast LLM picks the fault when one is configured, otherwise keywords do. The country must be one of DE/US/ES/JP and allowed
+for that fault (e.g. other-language search only in DE/US, Android only on Android). If nothing matches, the page explains why it cannot be
+simulated now. A saved scenario uses the format above (start 27 Nov 09:00, 12 h, one event-log entry for the fault's component) plus a
+`guide:` block (`title, what, where, shop, metrics, agent`) that the dashboard shows; "metrics" comes from the metric graph and the last
+24 h in the database.

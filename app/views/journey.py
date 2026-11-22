@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 from common import LANGUAGE_MARKETS, controls, page
-from guide import JOURNEY
+from guide import GUIDE, JOURNEY
 from widgets import kpi_grid, scenario_card
 
 rt, palette = page()
@@ -17,12 +17,14 @@ st.markdown(
 )
 st.markdown(
     '<div class="steps"><div class="step"><div class="n">1</div><b>Start the clock</b><span>One simulated hour passes every few seconds.</span></div>'
-    '<div class="step"><div class="n">2</div><b>Break something</b><span>Press "Break it" on a step below.</span></div>'
+    '<div class="step"><div class="n">2</div><b>Simulate a failure</b><span>Press "Simulate it" on a step below; the clock starts at one hour per second.</span></div>'
     '<div class="step"><div class="n">3</div><b>Look as a shopper</b><span>"See it in the store" opens the shop on the broken search.</span></div>'
     '<div class="step"><div class="n">4</div><b>Read the finding</b><span>Within 1-3 simulated hours the agent\'s report appears in the step.</span></div></div>',
     unsafe_allow_html=True,
 )
 controls(rt, "journey")
+ALL_STEPS = "All steps"
+steps = {f"Step {n} · {GUIDE[sid]['title']}": (n, sid) for n, sid in enumerate(JOURNEY, start=1)}
 
 
 @st.fragment(run_every=1)
@@ -31,8 +33,9 @@ def live() -> None:
     st.caption(f"{LANGUAGE_MARKETS[market]} (follows the store's Deliver to), last full hour")
     kpi_grid(rt, [("Orders", "orders"), ("Zero-result searches", "zero_result_rate"), ("Ad spend", "ad_spend"),
                   ("Top sellers in stock", "in_stock_rate_top"), ("Add-to-cart rate", "add_to_cart_rate")], {"market": market})  # fmt: skip
-    for n, sid in enumerate(JOURNEY, start=1):
-        scenario_card(rt, sid, step=n)
+    chosen = st.selectbox("Demo step", [ALL_STEPS, *steps], key="journey_step")
+    for n, sid in steps.values() if chosen == ALL_STEPS else [steps[chosen]]:
+        scenario_card(rt, sid, step=n, palette=palette)
 
 
 live()

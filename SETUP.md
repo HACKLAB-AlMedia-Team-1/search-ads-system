@@ -125,6 +125,11 @@ or web calls and cost nothing. No LLM key or model name is needed until Phase 6,
 then only if you choose `live` / `record` (optionally with a local model such as Ollama).
 Only fill in `LINKUP_API_KEY` if you decide to use live web search.
 
+To let the agent use a model (optional), set in `.env`: `LLM_MODE=live`, `LLM_BASE_URL` (any OpenAI-compatible endpoint, e.g.
+Ollama `http://127.0.0.1:11434/v1` or a cloud provider), `LLM_API_KEY` (if the provider needs one) and the two model names
+`LLM_MODEL_AGENT` (drives the investigation) and `LLM_MODEL_FAST` (plain-language findings, reading user-written scenarios).
+If the model is unreachable the app falls back to the rule-based agent. Keep `offline` while running the tests.
+
 **Why:** `.env` may hold secrets and is listed in `.gitignore`, so it is never uploaded to GitHub.
 
 ---

@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
+SCENARIO_DIR = Path(__file__).resolve().parents[1] / "scenarios"
+
 JOURNEY = ("L1", "AD1", "INV1")
 FAILURES = ("L1", "S12", "AD1", "INV1", "S1", "S3", "S2", "S7", "S15")
 INNOCENT = ("EV1", "DQ1")
@@ -11,7 +17,7 @@ GUIDE: dict[str, dict[str, str]] = {
         "title": "Foreign-language searches fail",
         "what": "A config change makes the store accept only its own language. Normally both English and German work in the "
         "German and the US store; now searches in the other language find nothing.",
-        "shop": "Choose the country in the store (Deliver to), press Break it, then search in the other language "
+        "shop": "Choose the country in the store (Deliver to), press Simulate it, then search in the other language "
         "(English in Germany, German in the US): no results. The local language still works.",
         "metrics": "In that country only: about 1 in 5 shoppers search in the other language, so zero-result searches jump "
         "and clicks and orders fall. Other countries stay normal.",
@@ -105,3 +111,14 @@ GUIDE: dict[str, dict[str, str]] = {
 FOREIGN_QUERY = {"DE": "headphones", "US": "kopfhörer"}
 SHOP_VIEW = {"S12": ("DE", "web", "kopfhörer"), "AD1": ("DE", "web", "kopfhörer"), "INV1": ("DE", "web", "kopfhörer"),
              "S3": ("US", "android", "headphones"), "S1": ("US", "web", "headphones")}  # fmt: skip
+
+
+def custom_scenarios() -> tuple[str, ...]:
+    """Ids of the scenarios written on the 'Add a scenario' page; their plain-language guide is added to GUIDE."""
+    ids = []
+    for path in sorted(SCENARIO_DIR.glob("*.yaml")):
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if raw.get("guide"):
+            GUIDE[raw["id"]] = raw["guide"]
+            ids.append(raw["id"])
+    return tuple(ids)

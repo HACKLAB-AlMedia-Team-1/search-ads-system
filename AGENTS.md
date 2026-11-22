@@ -12,4 +12,6 @@ The full rules are in `CLAUDE.md`. They apply to you too. The short version:
 5. **Money:** keep `LLM_MODE=offline` and `LINKUP_MODE=offline`. Never call paid APIs.
 6. **Done means:** the phase's acceptance criteria in `PLAN.md` pass, `pytest -q` is green, `ruff check .` is clean,
    and the PR description lists what you built, how to run it, and any decision you made.
-7. **Memory:** add a short entry to `docs/MEMORY.md` → "Session log" in your PR (newest first).
+7. **LLM:** every model call goes through `rootsight/agent/llm.py` and must have a rule-based fallback (investigator,
+   `agent/narrate.py`, `sim/custom.py`). Tests that edit metrics use a temp copy of `metrics.yaml`.
+8. **Memory:** add a short entry to `docs/MEMORY.md` → "Session log" in your PR (newest first).

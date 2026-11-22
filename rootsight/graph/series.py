@@ -8,7 +8,7 @@ from datetime import datetime
 import pandas as pd
 
 from rootsight.graph.graph import MetricSpec
-from rootsight.store.db import Database
+from rootsight.store.db import Database, inline_sql
 
 COLUMN_MAP = {"component_hourly": {"market": "scope"}}
 
@@ -18,15 +18,14 @@ def column(table: str, dim: str) -> str:
     return COLUMN_MAP.get(table, {}).get(dim, dim)
 
 
-def _run(
-    db: Database,
+def _query(
     spec: MetricSpec,
     start: datetime,
     end: datetime,
     segment: Mapping[str, str] | None,
     by: Sequence[str],
     hourly: bool,
-) -> pd.DataFrame:
+) -> tuple[str, list]:
     expr, table, where = spec.parts()
     if unknown := [d for d in by if d not in spec.dims]:
         raise ValueError(f"{spec.name} cannot be split by {unknown}")
@@ -42,7 +41,24 @@ def _run(
     sql = f"SELECT {', '.join(select)} FROM {table} WHERE {' AND '.join(conditions)}"
     if group:
         sql += f" GROUP BY {', '.join(group)} ORDER BY {', '.join(group)}"
-    frame = db.df(sql, params)
+    return sql, params
+
+
+def metric_sql(spec: MetricSpec, start: datetime, end: datetime, segment: Mapping[str, str] | None = None) -> str:
+    """The SQL that computes a metric over a window for a segment, with the values written in (for display)."""
+    return inline_sql(*_query(spec, start, end, segment, (), hourly=False))
+
+
+def _run(
+    db: Database,
+    spec: MetricSpec,
+    start: datetime,
+    end: datetime,
+    segment: Mapping[str, str] | None,
+    by: Sequence[str],
+    hourly: bool,
+) -> pd.DataFrame:
+    frame = db.df(*_query(spec, start, end, segment, by, hourly))
     frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
     return frame
 

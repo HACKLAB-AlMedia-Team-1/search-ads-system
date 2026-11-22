@@ -23,6 +23,7 @@ from rootsight.logging_setup import setup_logging
 from rootsight.pipeline import Pipeline
 from rootsight.sim.clock import HOUR
 from rootsight.sim.faults import Scenario, load_scenarios
+from rootsight.sim.users import FOREIGN_SHARE
 from rootsight.store.db import Database
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,9 @@ SHOP_URL = f"http://localhost:{SHOP_PORT}"
 FOLLOWS_STORE = ("L1",)  # scenarios that break the country chosen in the store
 LANGUAGE_MARKETS = {"DE": "Germany", "US": "United States"}
 SPEEDS = {"Slow": 6.0, "Normal": 3.0, "Fast": 1.0}
+SIMULATE_SPEED = "Fast"
+FAILING_LANGUAGE = {"DE": "English", "US": "German"}  # L1: the language that finds nothing in each country
+AD_CAMPAIGN = {"AD1": "CMP-DE"}
 
 
 class Runtime:
@@ -115,8 +119,10 @@ class Runtime:
 
     def active(self) -> list[str]:
         """Ids of the scenarios whose fault is switched on right now."""
-        names = set(self.pipeline.sim.faults.active_names(self.now))
-        return [sid for sid, s in self.scenarios.items() if s.fault in names]
+        names, faults = set(self.pipeline.sim.faults.active_names(self.now)), self.pipeline.sim.faults
+        markets = {sid: self.broken_market.get(sid) or s.scope.get("market", "all") for sid, s in self.scenarios.items()}
+        return [sid for sid, s in self.scenarios.items() if s.fault in names
+                and faults.active(s.fault, self.now, None if markets[sid] == "all" else markets[sid])]  # fmt: skip
 
     def journey_market(self) -> str:
         """Country of the journey's first step: where L1 is broken, else the store's 'Deliver to' (US or DE)."""
@@ -134,6 +140,16 @@ class Runtime:
             self.pipeline.sim.activate(scenario, at=self.now)
             self.pipeline.sim.engine.cache.clear()  # no result cached before the change may be served after it
             self.started[sid] = self.now
+
+    def add_scenario(self, path: Path) -> None:
+        """Make a newly saved scenario file available to Simulate."""
+        self.scenarios.update(load_scenarios(path.parent, path.name))
+
+    def simulate(self, sid: str) -> None:
+        """Switch a scenario on and run the clock fast (one simulated hour per second), so the agent works live."""
+        self.inject(sid)
+        self.seconds_per_hour = SPEEDS[SIMULATE_SPEED]
+        self.start()
 
     def fix(self, sid: str | None = None) -> None:
         """End one running scenario (or all of them) at the next simulated hour."""
@@ -165,6 +181,72 @@ class Runtime:
             "state": row["status"].iloc[0],
             **json.loads(row["report_json"].iloc[0])["report"],
         }
+
+    def progress(self, sid: str) -> list[str]:
+        """What the agent is doing for a started scenario, newest stage last: watching, anomaly, investigation."""
+        since = self.started.get(sid)
+        if since is None:
+            return []
+        hours = int((self.now - since) / HOUR)
+        lines = [f"Hour {hours} since the fault started: the agent scores every metric each simulated hour."]
+        market = self.broken_market.get(sid) or self.scenarios[sid].scope.get("market", "all")
+        anomaly = self.db.df(
+            "SELECT ts, metric, segment_json, actual, expected, z FROM anomalies WHERE ts >= ? AND NOT planned "
+            "AND (? = 'all' OR segment_json LIKE ?) ORDER BY attention DESC LIMIT 1",
+            [since, market, f'%"{market}"%'],
+        )
+        if anomaly.empty:
+            return [*lines, "No unusual numbers yet."]
+        a = anomaly.iloc[0]
+        where = ", ".join(json.loads(a["segment_json"]).values()) or "all traffic"
+        name = self.pipeline.graph.metric(a["metric"]).description if a["metric"] in self.pipeline.graph.specs else a["metric"]
+        lines.append(f"Anomaly at {a['ts']:%H:00}: {name} in {where} is {a['actual']:,.3g} against a normal "
+                     f"{a['expected']:,.3g} ({a['z']:+.1f} standard deviations).")  # fmt: skip
+        case = self.db.df(
+            "SELECT case_id FROM cases WHERE kind = 'failure' AND ts >= ? ORDER BY ts DESC LIMIT 1", [since]
+        )
+        if case.empty:
+            return [*lines, "Waiting for the anomaly to repeat before opening a case."]
+        steps = self.db.df(
+            "SELECT step, tool, reasoning FROM investigations WHERE case_id = ? ORDER BY step", [case["case_id"].iloc[0]]
+        )
+        if steps.empty:
+            return [*lines, f"Case {case['case_id'].iloc[0]} opened; the investigation is starting."]
+        if (found := self.finding(sid)) is not None:
+            done = f"{len(steps)} checks; finding confirmed as incident #{found['incident_id']} (see below)"
+            return [*lines, f"Case {case['case_id'].iloc[0]} investigated with {done}."]
+        last = steps.iloc[-1]
+        latest = f"'{last['tool']}' ({last['reasoning'] or 'gathering evidence'})"
+        return [*lines, f"Investigating case {case['case_id'].iloc[0]}: {len(steps)} checks so far, latest {latest}."]
+
+    def orders_chart(self, sid: str) -> pd.DataFrame:
+        """L1 since Simulate, per closed hour: cumulative expected and received orders from searches in the failing language."""
+        since, market = self.started.get(sid), self.broken_market.get(sid, self.journey_market())
+        rows, expected, received = [], 0.0, 0.0
+        if since is None:
+            return pd.DataFrame(rows)
+        faults, fault = self.pipeline.sim.faults, self.scenarios[sid].fault
+        for k in range(int((self.now - since) / HOUR)):
+            hour = since + HOUR * k
+            p = self._known("orders", {"market": market}, hour)
+            if p is None:
+                continue
+            share = FOREIGN_SHARE * p["expected"]
+            expected += share
+            received += 0.0 if faults.active(fault, hour, market) else share  # blocked searches show nothing to buy
+            rows.append({"ts": hour + HOUR, "expected": expected, "received": received})
+        return pd.DataFrame(rows)
+
+    def ads_chart(self, sid: str) -> pd.DataFrame:
+        """AD1 for the simulated day: cumulative actual and planned spend of the campaign, and its fixed daily budget."""
+        day = (self.now - HOUR).replace(hour=0)
+        frame = self.db.df(
+            "SELECT ts, budget_daily_eur, planned_spend_eur, spend_eur FROM ads_hourly WHERE campaign_id = ? "
+            "AND ts >= ? AND ts < ? ORDER BY ts",
+            [AD_CAMPAIGN[sid], day, self.now],
+        )
+        return frame.assign(ts=frame["ts"] + HOUR, spend=frame["spend_eur"].cumsum(),
+                            planned=frame["planned_spend_eur"].cumsum())  # fmt: skip
 
     def notices(self, sid: str) -> list[str]:
         """Info cards (planned event, data delay) raised since an innocent scenario was started."""
@@ -209,6 +291,11 @@ class Runtime:
                 self._points[key] = self.pipeline.watcher.score_hour(metric, segment, hour)
         self._latest[series] = self._points[key]
         return self._points[key]
+
+    def forget_points(self) -> None:
+        """Drop every cached score (after a metric's SQL changed)."""
+        self._points.clear()
+        self._latest.clear()
 
     def _score_wanted(self) -> None:
         """After an hour is simulated: score that hour for every series the pages show (called with the lock held)."""

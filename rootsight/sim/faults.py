@@ -118,10 +118,10 @@ class Scenario:
         return Fault(self.fault, self.start, self.end, dict(self.scope))
 
 
-def load_scenarios(directory: Path) -> dict[str, Scenario]:
-    """Read every `*.yaml` scenario file in `directory`, keyed by scenario id."""
+def load_scenarios(directory: Path, pattern: str = "*.yaml") -> dict[str, Scenario]:
+    """Read every scenario file in `directory` matching `pattern` (default all `*.yaml`), keyed by scenario id."""
     out: dict[str, Scenario] = {}
-    for path in sorted(directory.glob("*.yaml")):
+    for path in sorted(directory.glob(pattern)):
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         when = datetime.fromisoformat
         out[raw["id"]] = Scenario(

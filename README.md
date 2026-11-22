@@ -20,11 +20,17 @@ streamlit run app/Home.py            :: dashboard on :8501, and it starts the Sh
 
 The dashboard opens at http://localhost:8501 and starts the web shop at http://localhost:8600. Everything is local and free: no account, no API key.
 
-**Demo in four clicks:** on *Shopper journey* press **Start the clock**, press **Break it** on a step, open **See it in the store** to look as a shopper,
-and within 1-3 simulated hours the agent's finding appears inside the step. *Reset demo* (sidebar) goes back to a clean state.
+**Demo in three clicks:** on *Shopper journey* pick a step (or *All steps*) and press **Simulate it**. The clock starts at one simulated hour
+per second, the step's chart appears, and *What the agent found* shows live what the agent is doing (scoring, anomaly, case, checks)
+until its finding appears: a plain-language summary, the failed check (with the SQL, tables, expected and actual value), the
+*Possible next action*, and every investigation step with the SQL it ran. Open **See it in the store** to look as a shopper. *Reset demo* (sidebar) goes back to a clean state.
 
-The journey: a shopper in Germany searches "kopfhörer" and gets nothing (search config broken), then the sponsored product is missing
-(ad budget burned by mid-morning), then the product is out of stock (supplier delivery never arrived). RootSight finds each cause on its own.
+The journey: a shopper searches in the store's other language and gets nothing (English in Germany, German in the US), then the
+sponsored product is missing (the German €250/day ad budget burned by mid-morning), then the top sellers are out of stock (supplier delivery
+never arrived; sold-out items cannot be added to the cart or checked out). RootSight finds each cause on its own.
+
+You can also **edit any metric** (built-in ones are saved to `rootsight/graph/metrics.yaml`) and **write your own monitoring scenario** in plain
+words on *Add a scenario*: the agent maps it onto a failure the simulator can produce, or tells you why it cannot be simulated yet.
 
 ![How RootSight works](docs/how_rootsight_works.png)
 
@@ -40,6 +46,7 @@ The journey: a shopper in Germany searches "kopfhörer" and gets nothing (search
 
 | ID | Failure | Found as |
 |---|---|---|
+| L1 | searches in the store's other language find nothing (Germany or US) | `search-language[DE/US]` |
 | S12 | German search reads text with English rules | `search-analyzer[DE]` |
 | AD1 | ad pacing ignores its hourly limits (Germany) | `pacing-service 1.4.0` |
 | INV1 | supplier delivery for top sellers is late | `goods-receiving` purchase order |
@@ -52,7 +59,7 @@ The journey: a shopper in Germany searches "kopfhörer" and gets nothing (search
 ## Tests
 
 ```bat
-pytest -q                   :: fast suite (~50 s)
+pytest -q                   :: fast suite (~3 min)
 pytest -m integration       :: full scenarios end to end (~3 min)
 ruff check .
 python scripts/smoke_ui.py  :: renders every Streamlit page headless
@@ -64,4 +71,5 @@ python scripts/smoke_ui.py  :: renders every Streamlit page headless
 
 `SETUP.md` (installs), `PLAN.md` (build plan), `docs/algorithm.md` (how it decides), `docs/SCENARIOS.md`, `docs/DOSSIER.md`, `docs/MEMORY.md` (decisions and status).
 An optional local or cloud model (any OpenAI-compatible endpoint) can drive the investigator: set `LLM_MODE=live`, `LLM_BASE_URL` and the two model names in `.env`.
-The rule-based investigator is the default and the fallback.
+With a model, the agent also rewrites each finding in plain words (rejected if it uses a number that is not in the tool results) and reads
+user-written scenarios. The rule-based investigator and the code-built wording are the default and the fallback.

@@ -14,7 +14,7 @@ from rootsight.agent.llm import LLMClient
 from rootsight.agent.tools import Toolbox
 from rootsight.config import Settings
 from rootsight.graph.graph import MetricGraph
-from rootsight.graph.onboarding import OnboardingResult, onboard
+from rootsight.graph.onboarding import OnboardingResult, edit_metric, onboard
 from rootsight.incidents.manager import IncidentEvent, IncidentManager
 from rootsight.monitor.watcher import Case, Watcher
 from rootsight.sim.clock import HOUR
@@ -73,6 +73,13 @@ class Pipeline:
         result = onboard(self.db, self.graph, name, description, sql, self.now, self.llm, self.custom_metrics)
         if result.added:
             self.watcher.pin(name)
+        return result
+
+    def edit_metric(self, name: str, description: str, sql: str) -> OnboardingResult:
+        """Change an existing metric's description and SQL (saved to its YAML file); it is re-scored from the next tick."""
+        result = edit_metric(self.db, self.graph, name, description, sql, self.now, self.custom_metrics)
+        if result.added:
+            self.watcher.forget_cache()
         return result
 
     def _impact(self, case: Case, segment: dict[str, str]) -> dict:

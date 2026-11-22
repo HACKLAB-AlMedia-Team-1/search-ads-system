@@ -28,11 +28,21 @@ Shared memory for every agent session and every teammate. Keep it short. Newest 
 | 8 | Streamlit UI | done | control room, ShopLens storefront (dark mode), metric graph, incidents, add metric; `scripts/smoke_ui.py` renders all pages |
 | 9+ | Journey rework + UI rebuild | done | DE journey (S12, AD1, INV1), web shop, new dashboard |
 | 9 | Demo hardening + docs | done (no recordings) | `scripts/demo.py`, README, `docs/algorithm.md`; Opus review not run (see Open questions) |
+| 10 | Simulate page backend changes | done | Simulate it, step picker, live agent status, step charts, plain report + failed check + SQL, stock-safe cart/checkout, edit metric, Add a scenario |
 
 Scenario status: all nine (S1, AD1, EV1, DQ1, S12, S3, S2, S7, S15) work in simulator, watcher and agent; the 15 integration tests cover them.
-Tests: `pytest -q` = 31 fast tests (~50 s); `pytest -m integration` = 15 scenario tests (~2.7 min); ruff clean; `scripts/smoke_ui.py` ok.
+Tests: `pytest -q` = 38 fast tests (~3 min); `pytest -m integration` = 17 scenario tests (~6 min, `L1` fails also on unchanged Test_N); ruff clean; `scripts/smoke_ui.py` ok (7 pages).
 
 ## Decisions (dated, one line each, with reason)
+
+- 2026-11-22 · "Break it" is now "Simulate it": it switches the fault on AND starts the clock at one simulated hour per second (*Fast*). Journey has a *Demo step* picker (Step 1/2/3/All steps) under the KPI tiles.
+- 2026-11-22 · Step charts appear only after Simulate: L1 = cumulative expected vs. received orders from searches in the failing language (received stays flat while broken; zero-result tile stays a rate); AD1 = cumulative actual vs. planned spend of CMP-DE vs. its fixed €250 budget for the simulated day.
+- 2026-11-22 · Live agent status (`Runtime.progress`) is read from `anomalies`/`cases`/`investigations` every second, filtered to the scenario's market; the finding replaces it.
+- 2026-11-22 · Reports carry a code-built plain `summary` and a `failed_check` (SQL, tables, expected, got, why); trail steps carry the SQL they ran (`Database.capture` + `inline_sql`, metric tools show the metric's SQL). "Next action" is shown as "Possible next action". `agent/narrate.py` lets the fast LLM reword summary/next action and drops it if it adds a number not in the facts.
+- 2026-11-22 · Metric edits (built-in too) re-run the SQL on 7 days, re-check the metric's causal links, log to `metric_registry` and rewrite only that metric's `description:`/`sql:` lines in `metrics.yaml` (comments kept); scores are recomputed (watcher + UI caches cleared).
+- 2026-11-22 · User-written scenarios: free text is mapped onto the 9 simulator faults (`sim/custom.py`, LLM or keywords); unsupported text, countries or devices get a plain reason instead. Saved to `scenarios/<ID>.yaml` with a `guide:` block; shown on *All scenarios → Your scenarios*.
+- 2026-11-22 · Checkout re-checks live stock (`/api/checkout`); sold-out items (also the sponsored card) cannot be added or checked out.
+- 2026-11-22 · User: no git actions (no commit/push/branch) until all development and testing is done and the user approves.
 
 - 2026-11-21 · Project = RootSight / AdSearch Sentinel: ads + search monitoring on one metric graph. Reason: strongest story + covers 40/40/20.
 - 2026-11-21 · Data = Amazon ESCI (real products, queries EN/ES/JP, labels). Ads and users are simulated (EUR 1,000/day, 3 campaigns). Markets US/ES/JP.
@@ -76,6 +86,9 @@ Tests: `pytest -q` = 31 fast tests (~50 s); `pytest -m integration` = 15 scenari
 
 ## Open questions
 
+- Live LLM: no endpoint/model/key in `.env` and no Ollama on the user's machine (2026-11-22). The user wants the agent to use a live model; waiting for the provider choice (cloud OpenAI-compatible key vs. local Ollama).
+- Integration test `test_scenario_is_traced_to_its_cause_and_reported_once[L1]` fails on Test_N HEAD too: after L1 is fixed a wasted-ad-spend incident opens in the cool-down window.
+
 - Team size and who owns which phase? (default plan assumes 3-4 people + Devin)
 - Should the Phase 0 commit (Devin co-author trailer) be reworded before pushing?
 - Run the Opus reviewer (`.devin/agents/reviewer.md`) in a fresh session, and install ponytail with the full path of `devin.exe`?
@@ -88,6 +101,8 @@ Tests: `pytest -q` = 31 fast tests (~50 s); `pytest -m integration` = 15 scenari
 - Watcher: real-time per-hour streak across restarts is in memory only; persist if the loop is restarted often.
 
 ## Session log (newest first)
+
+- 2026-11-22 · Simulate page backend changes (from "Backend changes prompt.docx"): Simulate it + step picker, live agent progress, L1/AD1 step charts, plain summary + failed check + SQL in the trail, stock-safe sponsored card and checkout, Edit metric (writes `metrics.yaml`), new *Add a scenario* page. New tests in `tests/test_backend_changes.py`. Checked headless: each journey step is found within 1 h with SQL in 8-9 of 9-11 steps; checkout blocks sold-out items. Live LLM still not configured. Recorded browser test on the VM passed; it found three gaps, now fixed: the clock controls redraw after Simulate, a user scenario only counts as active in its own market, and the sponsored slot is the top result even when sold out (Add disabled).
 
 - 2026-11-21 · Bug fix (page greyed out after +1 / +6 hours): the page's live panels were computing metric scores themselves and waiting for the simulation's lock, so Streamlit faded the page for 2-3 s and the two also slowed each other down (+6 hours took 11-13 s). Now the background worker scores the newest hour for every series the pages show (`Runtime._score_wanted`); pages only read cached values while the simulation is advancing; the watcher caches each hour's calendar/completeness lookup; the stale fade is disabled in CSS. Measured in a browser: no greyed time, +1 hour ~0.6 s, +6 hours first update ~0.6 s and done in 3.6-5.8 s (7 s with a fault active).
 - 2026-11-21 · Bug fix (restart): faults live only in memory, so after restarting the app the database still held old incidents while no fault was active; a re-injected fault then matched the stale open incident and the journey step never showed a finding. The app now starts fresh on every launch (`fresh_start` in `app/common.py` restores the backfill snapshot, drops the leftover `.wal` and custom metrics). `Runtime.finding` matches on `last_seen` so a reopened incident is shown too. Decision: nothing from a demo run survives a restart.

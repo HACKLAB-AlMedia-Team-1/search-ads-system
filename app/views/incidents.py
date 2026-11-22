@@ -29,7 +29,7 @@ st.caption(
 )
 frame = rt.db.df(f"SELECT {', '.join(COLUMNS)}, report_json FROM incidents ORDER BY incident_id DESC")
 if frame.empty:
-    st.info("No incidents yet. Open 'Shopper journey', press 'Break it' on a step and let the clock run.")
+    st.info("No incidents yet. Open 'Shopper journey', press 'Simulate it' on a step and let the clock run.")
     st.stop()
 st.dataframe(frame[list(COLUMNS)].rename(columns=COLUMNS), width="stretch", hide_index=True)
 labels = {
