@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
-JOURNEY = ("S12", "AD1", "INV1")
-FAILURES = ("S12", "AD1", "INV1", "S1", "S3", "S2", "S7", "S15")
+JOURNEY = ("L1", "AD1", "INV1")
+FAILURES = ("L1", "S12", "AD1", "INV1", "S1", "S3", "S2", "S7", "S15")
 INNOCENT = ("EV1", "DQ1")
 
 GUIDE: dict[str, dict[str, str]] = {
+    "L1": {
+        "title": "Foreign-language searches fail",
+        "what": "A config change makes the store accept only its own language. Normally both English and German work in the "
+        "German and the US store; now searches in the other language find nothing.",
+        "shop": "Choose the country in the store (Deliver to), press Break it, then search in the other language "
+        "(English in Germany, German in the US): no results. The local language still works.",
+        "metrics": "In that country only: about 1 in 5 shoppers search in the other language, so zero-result searches jump "
+        "and clicks and orders fall. Other countries stay normal.",
+        "agent": "Incident blaming `search-language[<country>] = local only`; rules out an indexing failure and a mobile release.",
+        "where": "The country chosen in the store (Germany or the US)",
+    },
     "S1": {
         "title": "Search shows unrelated products",
         "what": "A new search-ranker release sorts products by title length and brand size instead of matching the query.",
@@ -90,5 +101,7 @@ GUIDE: dict[str, dict[str, str]] = {
 }
 
 # What to open in the store to see each journey step as a shopper (market, device, search text).
+# L1 follows the store country and searches in the other language.
+FOREIGN_QUERY = {"DE": "headphones", "US": "kopfhörer"}
 SHOP_VIEW = {"S12": ("DE", "web", "kopfhörer"), "AD1": ("DE", "web", "kopfhörer"), "INV1": ("DE", "web", "kopfhörer"),
              "S3": ("US", "android", "headphones"), "S1": ("US", "web", "headphones")}  # fmt: skip

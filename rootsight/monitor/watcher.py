@@ -360,12 +360,13 @@ class Watcher:
         for n, members in enumerate(sorted(groups.values(), key=lambda g: -max(a.attention for a in g))):
             top = max(members, key=lambda a: a.attention)
             direction = "above" if top.z > 0 else "below"
-            pct = abs(top.actual - top.expected) / abs(top.expected) * 100 if top.expected else float("inf")
+            pct = abs(top.actual - top.expected) / abs(top.expected) * 100 if top.expected else None
+            size = f"{pct:.0f}%" if pct is not None else "far"
             where = ", ".join(f"{k}={v}" for k, v in top.segment.items()) or "all traffic"
             label = "Planned change" if kind == "planned" else "Unusual change"
             cases.append(Case(
                 case_id=f"C{hour:%Y%m%d%H}-{kind[0]}{n + 1}", ts=hour, kind=kind,
-                headline=f"{label}: {top.metric} is {pct:.0f}% {direction} expected ({where})",
+                headline=f"{label}: {top.metric} is {size} {direction} expected ({where})",
                 root_metric=top.metric, segment=top.segment, onset=min(a.onset for a in members),
                 attention=max(a.attention for a in members),
                 anomalies=sorted(members, key=lambda a: -a.attention),

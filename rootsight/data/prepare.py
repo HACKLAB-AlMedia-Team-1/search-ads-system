@@ -38,11 +38,22 @@ def _build_market(raw_dir: Path, market: str, n_queries: int, seed: int, now: da
     return products, queries, labels[["market", "query_id", "query", "product_id", "esci_label", "gain"]]
 
 
+def _german_shoppers_in_us(parts: list, markets: list[str]) -> None:
+    """Give the US store the products and labels of the German queries, so German-speaking US shoppers find them."""
+    us, de = parts[markets.index("US")], parts[markets.index("DE")]
+    products = pd.concat([us[0], de[0].assign(market="US")]).drop_duplicates(["market", "product_id"])
+    labels = pd.concat([us[2], de[2].assign(market="US")]).drop_duplicates(
+        ["market", "query_id", "product_id"]
+    )
+    parts[markets.index("US")] = (products.reset_index(drop=True), us[1], labels.reset_index(drop=True))
+
+
 def prepare(
     raw_dir: Path, out_dir: Path, seed: int, now: datetime, n_queries: int = QUERIES_PER_MARKET
 ) -> dict:
     """Write `products`, `queries`, `labels` and `traffic_profile` parquet files; return row counts."""
     parts = [_build_market(raw_dir, m, n_queries, seed, now) for m in MARKETS]
+    _german_shoppers_in_us(parts, list(MARKETS))
     out_dir.mkdir(parents=True, exist_ok=True)
     frames = {
         "products": pd.concat([p[0] for p in parts], ignore_index=True),

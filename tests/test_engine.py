@@ -50,6 +50,16 @@ def test_normal_quality(engine, sample):
         assert m["zero_rate"] < 0.15
 
 
+def test_l1_blocks_the_other_language_only_while_broken(engine):
+    search = lambda q, m, at=T0: engine.search(q, m, "web", SearchFilters(), at)
+    for query in ("shoes", "schuhe"):
+        assert not search(query, "DE").zero_result and not search(query, "US").zero_result
+    later = T0 + timedelta(hours=2)
+    engine.faults.add(Fault(f.FOREIGN_LANGUAGE_BLOCKED, later, scope={"market": "DE"}))
+    assert search("shoes", "DE", later).zero_result and not search("schuhe", "DE", later).zero_result
+    assert not search("schuhe", "US", later).zero_result  # only the broken country is affected
+
+
 def test_s1_ranker_v2(engine, sample):
     base = measure(engine, sample, "US")
     later = T0 + timedelta(hours=2)

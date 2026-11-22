@@ -10,7 +10,7 @@
 
 contexts:
   events.search:
-    components: [search-ranker, search-analyzer, ranking, index-build, search-cache]
+    components: [search-ranker, search-analyzer, search-language, ranking, index-build, search-cache]
     note: search releases, configs and index jobs
   events.ads:
     components: [pacing-service]

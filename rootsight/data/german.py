@@ -48,6 +48,33 @@ thermometer=thermometer scale=waage razor=rasierer trimmer=trimmer toothbrush=za
 
 EN_DE: dict[str, str] = dict(pair.split("=") for pair in PAIRS.split())
 DE_EN: dict[str, str] = {unidecode(de): en for en, de in EN_DE.items()}
+# German words that are also common English words; they never count as "the wrong language".
+ALSO_ENGLISH = frozenset(
+    ["hose", "tee", "rot", "mantel", "regal", "hut", "lang", "bild", "decke", "fur", "braun", "mixer", "roller",
+     "pullover", "kinder", "puppe"]
+)  # fmt: skip
+ENGLISH_ONLY = frozenset(EN_DE) - frozenset(DE_EN)
+GERMAN_ONLY = frozenset(DE_EN) - frozenset(EN_DE) - ALSO_ENGLISH
+
+
+def wrong_language(query: str, market: str) -> bool:
+    """Is the query typed in the other language of the store (English in DE, German in US)?"""
+    words = set(WORD.findall(unidecode(query.lower())))
+    foreign = {"DE": ENGLISH_ONLY, "US": GERMAN_ONLY}.get(market, frozenset())
+    return bool(words & foreign)
+
+
+def to_english(query: str) -> str:
+    """English version of a German query (word by word)."""
+    return " ".join(to_english_words(query))
+
+
+def understand_german(query: str) -> str:
+    """How the US store reads a query: German-only words become English, everything else stays as typed."""
+    words = WORD.findall(unidecode(query.lower()))
+    if not any(w in GERMAN_ONLY for w in words):
+        return query
+    return " ".join(DE_EN[w] if w in GERMAN_ONLY else w for w in words)
 
 
 def translatable(query: str) -> bool:

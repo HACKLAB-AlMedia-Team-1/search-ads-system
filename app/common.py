@@ -31,6 +31,8 @@ BAND_SIGMAS = 3
 SHOP_PORT = 8600
 FIRST_HOUR_WAIT = 1.5
 SHOP_URL = f"http://localhost:{SHOP_PORT}"
+FOLLOWS_STORE = ("L1",)  # scenarios that break the country chosen in the store
+LANGUAGE_MARKETS = {"DE": "Germany", "US": "United States"}
 SPEEDS = {"Slow": 6.0, "Normal": 3.0, "Fast": 1.0}
 
 
@@ -48,6 +50,8 @@ class Runtime:
         self.seconds_per_hour = self.settings.seconds_per_sim_hour
         self.running = False
         self.started: dict[str, datetime] = {}
+        self.shop_market = "DE"
+        self.broken_market: dict[str, str] = {}
         self._thread: threading.Thread | None = None
         self._queued = 0
         self._wake = threading.Event()
@@ -114,15 +118,27 @@ class Runtime:
         names = set(self.pipeline.sim.faults.active_names(self.now))
         return [sid for sid, s in self.scenarios.items() if s.fault in names]
 
+    def journey_market(self) -> str:
+        """Country of the journey's first step: where L1 is broken, else the store's 'Deliver to' (US or DE)."""
+        if "L1" in self.active() and "L1" in self.broken_market:
+            return self.broken_market["L1"]
+        return self.shop_market if self.shop_market in LANGUAGE_MARKETS else "DE"
+
     def inject(self, sid: str) -> None:
-        """Switch a scenario on, starting at the next simulated hour."""
+        """Switch a scenario on, starting at the next simulated hour (L1 in the country chosen in the store)."""
         with self.lock:
-            self.pipeline.sim.activate(self.scenarios[sid], at=self.now)
+            scenario = self.scenarios[sid]
+            if sid in FOLLOWS_STORE:
+                self.broken_market[sid] = self.journey_market()
+                scenario = scenario.for_market(self.broken_market[sid])
+            self.pipeline.sim.activate(scenario, at=self.now)
+            self.pipeline.sim.engine.cache.clear()  # no result cached before the change may be served after it
             self.started[sid] = self.now
 
     def fix(self, sid: str | None = None) -> None:
         """End one running scenario (or all of them) at the next simulated hour."""
         with self.lock:
+            self.pipeline.sim.engine.cache.clear()
             if sid is None:
                 self.pipeline.sim.stop_all(self.now)
             else:

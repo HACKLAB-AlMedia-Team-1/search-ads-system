@@ -14,6 +14,7 @@ NEXT_ACTIONS = {
     "search-ranker": "Roll back search-ranker to the previous version, then review why v2 ignores text relevance.",
     "ranking": "Revert the ranking.boost_recency change and re-test result order on a sample of queries.",
     "search-analyzer": "Restore the language-specific analyzer for the affected market and re-index if needed.",
+    "search-language": "Turn the 'local language only' setting off again so shoppers can search in other languages.",
     "android-app": "Halt the Android rollout and hotfix the null stock filter; the API should also reject a null filter.",
     "index-build": "Re-run the index build (shards were missing) and alert on index document count.",
     "search-cache": "Reset the cache TTL to its previous value and flush stale entries.",

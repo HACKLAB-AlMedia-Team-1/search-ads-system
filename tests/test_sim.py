@@ -37,7 +37,7 @@ def totals(db, start, end, table="fact_hourly", by="market"):
 
 
 def test_scenarios_load():
-    assert set(SCENARIOS) == {"S1", "S12", "S3", "AD1", "EV1", "DQ1", "S2", "S7", "S15", "INV1"}
+    assert set(SCENARIOS) == {"S1", "S12", "S3", "AD1", "EV1", "DQ1", "S2", "S7", "S15", "INV1", "L1"}
     moved = SCENARIOS["S1"].shifted(datetime(2026, 12, 1, 9, 0))
     assert moved.start == datetime(2026, 12, 1, 9, 0) and moved.event_log[0]["ts"] == datetime(
         2026, 12, 1, 8, 55

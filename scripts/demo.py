@@ -88,8 +88,10 @@ def main() -> int:
         "Day 1 - Black Friday: marketing doubles the ad budget for a new audience (planned). NOT an incident."
     )
     inject("EV1", day, 24)
-    say("Day 2, 12:00 - shopper journey, step 1: a config change breaks search for German queries.")
-    inject("S12", day + 36 * H, 3)
+    say(
+        "Day 2, 12:00 - shopper journey, step 1: a config change makes the German store reject English searches."
+    )
+    inject("L1", day + 36 * H, 3)
     say(
         "Day 3, midnight - step 2: a release makes the German ad campaign ignore its hourly limits; the budget is gone by mid-morning."
     )

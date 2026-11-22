@@ -18,6 +18,7 @@ SLOTS = {  # each run takes up to 11 h (fault + 5 h cool-down); the clock only m
     "S7": datetime(2026, 11, 23, 18),
     "S15": datetime(2026, 11, 24, 8),
     "INV1": datetime(2026, 11, 24, 20),
+    "L1": datetime(2026, 11, 25, 10),
 }
 
 

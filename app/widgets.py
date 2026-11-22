@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 import plotly.graph_objects as go
 import streamlit as st
 from common import SHOP_URL, Runtime, last_hour
-from guide import GUIDE, SHOP_VIEW
+from guide import FOREIGN_QUERY, GUIDE, SHOP_VIEW
 
 STATUS_BADGE = {
     "SUPPORTED": ("good", "Cause confirmed"),
@@ -138,8 +138,11 @@ def report_card(report: dict, state: str | None = None) -> None:
         st.markdown(steps, unsafe_allow_html=True)
 
 
-def shop_link(sid: str) -> str | None:
+def shop_link(rt: Runtime, sid: str) -> str | None:
     """URL that opens the store exactly where a scenario can be seen (country, device, search text)."""
+    if sid == "L1":
+        market = rt.journey_market()
+        return f"{SHOP_URL}/?{urlencode({'market': market, 'device': 'web', 'q': FOREIGN_QUERY[market]})}"
     if sid not in SHOP_VIEW:
         return None
     market, device, query = SHOP_VIEW[sid]
@@ -173,7 +176,7 @@ def scenario_card(rt: Runtime, sid: str, step: int | None = None) -> None:
             f"<i>What the agent should do</i><span>{info['agent']}</span></div>",
             unsafe_allow_html=True,
         )
-        link = shop_link(sid)
+        link = shop_link(rt, sid)
         if link:
             st.link_button("See it in the store", link, icon=":material/storefront:")
         if finding:

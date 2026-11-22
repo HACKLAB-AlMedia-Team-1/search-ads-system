@@ -1,16 +1,17 @@
-"""The guided demo: one shopper journey in Germany with three failures in a row, each found by the agent."""
+"""The guided demo: one shopper journey with three failures in a row, each found by the agent."""
 
 from __future__ import annotations
 
 import streamlit as st
-from common import controls, page
+from common import LANGUAGE_MARKETS, controls, page
 from guide import JOURNEY
 from widgets import kpi_grid, scenario_card
 
 rt, palette = page()
 st.title("One shopper, three failures")
 st.markdown(
-    "A shopper in Germany searches for **kopfhörer** and finds nothing (search is broken). Once fixed, the **sponsored product is missing** "
+    "Step 1 happens in the country you choose in the store (**Deliver to**: Germany or United States): searches in the other "
+    "language suddenly find nothing. Steps 2 and 3 happen in Germany: the **sponsored product is missing** "
     "(the ad budget was gone by mid-morning). Then the product is **out of stock** (a supplier delivery never arrived). "
     "RootSight is told none of this. It has to notice each problem and trace it to its cause."
 )
@@ -26,9 +27,10 @@ controls(rt, "journey")
 
 @st.fragment(run_every=1)
 def live() -> None:
-    st.caption("Germany, last full hour")
+    market = rt.journey_market()
+    st.caption(f"{LANGUAGE_MARKETS[market]} (follows the store's Deliver to), last full hour")
     kpi_grid(rt, [("Orders", "orders"), ("Zero-result searches", "zero_result_rate"), ("Ad spend", "ad_spend"),
-                  ("Top sellers in stock", "in_stock_rate_top"), ("Add-to-cart rate", "add_to_cart_rate")], {"market": "DE"})  # fmt: skip
+                  ("Top sellers in stock", "in_stock_rate_top"), ("Add-to-cart rate", "add_to_cart_rate")], {"market": market})  # fmt: skip
     for n, sid in enumerate(JOURNEY, start=1):
         scenario_card(rt, sid, step=n)
 

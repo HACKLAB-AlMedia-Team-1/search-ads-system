@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from rootsight.data.german import understand_german, wrong_language
 from rootsight.data.loaders import MARKETS
 from rootsight.engine import ranker
 from rootsight.engine.analyzers import analyze
@@ -136,7 +137,11 @@ class SearchEngine:
             if self.faults.active(fault_names.REGIONAL_ANALYZER_ENGLISH, sim_time, market)
             else index.lang
         )
-        tokens = analyze(query, lang)
+        blocked = self.faults.active(
+            fault_names.FOREIGN_LANGUAGE_BLOCKED, sim_time, market
+        ) and wrong_language(query, market)
+        text = understand_german(query) if market == "US" else query
+        tokens = [] if blocked else analyze(text, lang)
         visible = self._visible(market, sim_time) & self._filter_mask(market, platform, filters, sim_time)
         bm25 = index.scores(tokens)
         idx, scores = ranker.rank(index, bm25, visible, self._mode(market, sim_time), query, limit)

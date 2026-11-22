@@ -196,12 +196,20 @@ def _look_alikes(tb: Toolbox, h: Hypothesis, component: str, end) -> list[dict]:
                 for p in PLATFORMS
             }
             hit = [p for p, s in scores.items() if s and abs(s["z"]) >= LOCATION_Z]
+            released = {
+                tb.graph.platform_of[e["component"]]
+                for e in tb.get_events(8)["events"]
+                if e["component"] in tb.graph.platform_of
+            }
+            explains = len(hit) == 1 and hit[0] in released
             reason = (
-                f"only {hit[0]} is affected"
+                f"only {hit[0]} is affected and there was a {hit[0]} release"
+                if explains
+                else f"only {hit[0]} stands out, but no {hit[0]} app was released"
                 if len(hit) == 1
                 else f"{len(hit)} of {len(PLATFORMS)} platforms are affected; an app release would hit exactly one"
             )
-            out.append({"name": "mobile app release", "rejected": len(hit) != 1, "reason": reason})
+            out.append({"name": "mobile app release", "rejected": not explains, "reason": reason})
     elif table == "ads_hourly":
         shares = {f["factor"]: f["share_pct"] for f in tb.decompose("ad_spend", h.segment).get("factors", [])}
         price = abs(shares.get("cpc", 0.0))

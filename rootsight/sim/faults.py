@@ -18,6 +18,7 @@ AD_PACING_RUNAWAY = "ad_pacing_runaway"  # AD1
 CAMPAIGN_PUSH = "campaign_push"  # EV1 (planned, innocent)
 SEARCH_EVENTS_LATE = "search_events_late"  # DQ1 (innocent)
 SUPPLIER_DELIVERY_LATE = "supplier_delivery_late"  # INV1
+FOREIGN_LANGUAGE_BLOCKED = "foreign_language_blocked"  # L1
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,17 @@ class Scenario:
             end=self.end + delta if self.end else None,
             event_log=move(self.event_log, ("ts",)),
             calendar=move(self.calendar, ("start_ts", "end_ts")),
+        )
+
+    def for_market(self, market: str) -> Scenario:
+        """Copy of a one-market scenario moved to another market (scope and event text follow)."""
+        old = self.scope.get("market", "")
+        rename = lambda text: text.replace(f"[{old}]", f"[{market}]")
+        return replace(
+            self,
+            scope={**self.scope, "market": market},
+            event_log=tuple({**e, "detail": rename(e["detail"])} for e in self.event_log),
+            expected_root_cause=rename(self.expected_root_cause),
         )
 
     def to_fault(self) -> Fault:

@@ -9,6 +9,7 @@ data/*.duckdb.wal
 data/cache/
 
 # python
+.venv/
 __pycache__/
 *.pyc
 .pytest_cache/

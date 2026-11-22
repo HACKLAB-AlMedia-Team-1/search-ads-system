@@ -14,8 +14,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
 
+from rootsight.data.german import wrong_language
 from rootsight.engine.search import SearchFilters, SearchResult
 from rootsight.sim.ads import CAMPAIGNS
+from rootsight.sim.faults import FOREIGN_LANGUAGE_BLOCKED
 
 if TYPE_CHECKING:
     from common import Runtime
@@ -119,7 +121,12 @@ class Shop:
         notes = []
         if result.zero_result:
             self.rt.log_ux("zero_result", market, platform, query, session=params.get("sid", ""))
-            notes.append("This search returned nothing.")
+            notes.append(
+                f"The {market} store accepts only its own language right now, so this search returned nothing."
+                if self.rt.pipeline.sim.faults.active(FOREIGN_LANGUAGE_BLOCKED, self.rt.now, market)
+                and wrong_language(query, market)
+                else "This search returned nothing."
+            )
         if not campaign["active"]:
             notes.append(
                 f"No sponsored product: the {market} ad campaign has spent its daily budget (EUR {campaign['spent']:.0f} of {campaign['budget']:.0f})."
@@ -181,6 +188,8 @@ class Handler(BaseHTTPRequestHandler):
         params = {k: v[0] for k, v in parse_qs(url.query).items()}
         params["market"] = params.get("market") if params.get("market") in CAMPAIGNS else "US"
         params["device"] = params.get("device") if params.get("device") in PLATFORMS else "web"
+        if url.path in ("/api/home", "/api/search"):
+            self.shop.rt.shop_market = params["market"]  # the journey page follows the store's "Deliver to"
         try:
             if url.path == "/api/home":
                 self._json(self.shop.home(params["market"]))
