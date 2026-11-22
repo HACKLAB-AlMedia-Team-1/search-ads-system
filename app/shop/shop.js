@@ -76,14 +76,16 @@ function toast(message, bad = false) {
   toast.timer = setTimeout(() => (el.hidden = true), 2600);
 }
 
-const picHtml = (i, open = true) => `<div class="pic" ${open ? `data-open="${i.doc}"` : ""}>${i.picture}</div>`;  // drawn by the server
+// a real photo of the product type when the shop has one, else the picture the server draws for this product
+const picHtml = (i, open = true) => `<div class="pic${i.photo ? " photo" : ""}" ${open ? `data-open="${i.doc}"` : ""}>${
+  i.photo ? `<img src="${esc(i.photo)}" alt="${esc(i.title.slice(0, 80))}" loading="lazy">` : i.picture}</div>`;
 const soldHtml = i => `<div class="sold">${i.best_rank ? `<b>#${i.best_rank} ${t().best}</b> ${t().inQuery} “${esc(i.best_in)}” · ` : ""}${t().sold(i.sold)}</div>`;
 const stars = r => "★".repeat(Math.round(r)) + "☆".repeat(5 - Math.round(r));
 const priceHtml = (p, i) => { const [e, c] = p.toFixed(2).split(".");
   return `<span class="price"><sup>€</sup>${e}<sup>${c}</sup>${i && i.was ? `<span class="was">€${i.was.toFixed(2)}</span><span class="off">-${i.off}%</span>` : ""}</span>`; };
 const stockHtml = i => i.stock <= 0 ? `<span class="stock out">${t().unavailable}</span>`
   : i.stock <= 5 ? `<span class="stock out">${t().left(i.stock)}</span>` : `<span class="stock in">${t().inStock}</span>`;
-const deliveryHtml = i => `<span class="delivery">${i.fast ? `<b>fast</b> ${t().fast}` : t().standard}</span>`;
+const deliveryHtml = i => `<span class="delivery">${i.fast ? `<b>✓</b> ${t().fast}` : t().standard}</span>`;
 
 function cardHtml(i, sponsored = false) {
   return `<article class="card" data-doc="${i.doc}">
@@ -105,7 +107,7 @@ function visibleItems() {
 
 function renderNotes(notes) {
   $("notes").hidden = !notes.length;
-  $("notes").innerHTML = `<b>Demo note</b>what a monitoring system should notice here:<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>`;
+  $("notes").innerHTML = `<b>Demo note</b> - what a monitoring system should notice here:<ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>`;
 }
 
 function renderResults() {
@@ -113,7 +115,7 @@ function renderResults() {
   const brands = [...new Set(d.items.map(i => i.brand).filter(Boolean))].slice(0, 10);
   const filters = `<aside class="filters">
     <h3>${tx.fStock}</h3><label><input type="checkbox" id="f-stock" ${state.inStock ? "checked" : ""}>${tx.fInStock}</label>
-    <h3>${tx.fPrice}</h3><div class="price"><input type="number" id="f-min" placeholder="€ min" value="${esc(state.min)}">
+    <h3>${tx.fPrice}</h3><div class="range"><input type="number" id="f-min" placeholder="€ min" value="${esc(state.min)}">
       <input type="number" id="f-max" placeholder="€ max" value="${esc(state.max)}"><button class="go" id="f-go">${tx.fGo}</button></div>
     <h3>${tx.fRating}</h3>${[0, 4, 3].map(r => `<label><input type="radio" name="f-rating" value="${r}" ${state.rating === r ? "checked" : ""}>
       ${r ? `<span class="stars">${stars(r)}</span> ${tx.fUp}` : tx.fAny}</label>`).join("")}
@@ -182,6 +184,7 @@ function renderCart() {
 
 async function addToCart(doc) {
   const item = find(doc);
+  if (!item) return;  // the page refreshed itself and this product is no longer on it
   const answer = await api("/api/cart", { market: state.market, device: state.device, doc: item.doc, price: item.price, rank: item.rank, query: state.q, sid: state.sid });
   if (!answer.ok) return toast(t().sorry, true);
   if (answer.changed) toast(t().priceChanged(answer.price.toFixed(2)), true); else toast(t().added);
@@ -192,6 +195,7 @@ async function addToCart(doc) {
 
 function openProduct(doc) {
   const i = find(doc), tx = t();
+  if (!i) return;
   track("click", { rank: i.rank });
   $("modal-box").innerHTML = `${picHtml(i, false)}<div>${i.best ? `<span class="best">${tx.best}</span>` : ""}<h2>${esc(i.title)}</h2>
     <div class="stars">${stars(i.rating)}<small>${i.reviews.toLocaleString()}</small></div>${soldHtml(i)}${priceHtml(i.price, i)}<br>${deliveryHtml(i)}<br>${stockHtml(i)}
@@ -215,7 +219,9 @@ document.addEventListener("click", event => {
 });
 document.addEventListener("change", event => {
   const el = event.target;
-  if (el.id === "market") { state.market = el.value; localStorage.setItem("market", el.value); state.q = ""; load(); }
+  if (el.id === "market") {  // another country is another catalogue: its cart starts empty
+    state.market = el.value; localStorage.setItem("market", el.value); state.q = ""; state.cart = []; renderCart(); load();
+  }
   else if (el.id === "device") { state.device = el.value; load(); }
   else if (el.id === "sort") { state.sort = Number(el.value); renderResults(); }
   else if (el.id === "f-stock") { state.inStock = el.checked; load(); }
@@ -231,6 +237,7 @@ $("logo").addEventListener("click", event => { event.preventDefault(); search(""
 $("cart-btn").addEventListener("click", () => ($("drawer").hidden = false));
 $("drawer-close").addEventListener("click", () => ($("drawer").hidden = true));
 $("checkout").addEventListener("click", async () => {
+  $("checkout").disabled = true;  // no second order from a double click
   const answer = await api("/api/checkout", { market: state.market, device: state.device, docs: state.cart.flatMap(i => Array(i.qty).fill(i.doc)), sid: state.sid });
   if (!answer.ok) {  // an item sold out after it was added: it leaves the cart and the order is not placed
     state.cart = state.cart.filter(i => !answer.unavailable.includes(i.doc)); renderCart(); return toast(t().sorry, true);

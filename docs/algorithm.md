@@ -44,6 +44,10 @@ The simulated night (01:00-06:59) is passed without waiting, and a failure start
 6. `record_hypothesis` runs the evidence checklist.
 7. `estimate_impact`, `finish`. The report is assembled in code from tool results; the model never writes a number.
 
+This order is the rule-based recipe (`agent/offline_policy.py`), which is what runs by default. With a language model
+switched on, the model chooses the next tool itself from the same tools and the same limit of 12 calls; a model that has
+not tested a cause four calls before the limit is reminded to, and if it fails the recipe finishes the job.
+
 ## 5. When the evidence is sufficient (computed in `agent/evidence.py`)
 
 | Check | Passes when |
@@ -72,3 +76,14 @@ cause coming back later is a new incident with a fresh report (`IncidentManager.
 `{name, description, sql}` -> parse with sqlglot -> propose edges (shared columns; the fast model if configured) -> validate in code
 (the SQL must run on history, dimensions must exist, a correlation edge needs |r| >= 0.6 over 7 days at lags 0-2 hours, otherwise it is kept
 with half the confidence and flagged AMBIGUOUS) -> write to `metric_registry` and `data/metrics_custom.yaml` -> the watcher scores it next tick.
+With a model, the SQL itself can be written from a plain description (`draft_metric`): the statement is run on 7 days of
+history and shown to the person, who decides. It is never added unseen, because a statement can run and still be wrong.
+
+## 8. Rules or a language model
+
+Measured on 22 Nov 2026 (`docs/MODEL_COMPARISON.md`, one run per scenario): the rule recipe finds and confirms all nine
+known failures in 0.3 s; Claude Opus also confirms all nine without a recipe (38 s); two local models (Qwen 3.5, 4B and 9B)
+find eight and nine but confirm only six and seven. Reading a person's description: keywords 4 of 12, local models 10,
+cloud models 12. Writing SQL from words: rules cannot, local models right 2-3 of 6, cloud models 6 of 6.
+So: rules where the failure is known and speed matters, a model for language and for cases no recipe covers, and code for
+every number and every check either of them produces.

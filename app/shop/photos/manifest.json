@@ -1,0 +1,368 @@
+{
+ "boot": [
+  {
+   "file": "boot_09.jpg",
+   "colour": "#4e5254"
+  },
+  {
+   "file": "boot_17.jpg",
+   "colour": "#8f5e4a"
+  },
+  {
+   "file": "boot_10.jpg",
+   "colour": "#648277"
+  },
+  {
+   "file": "boot_11.jpg",
+   "colour": "#806361"
+  },
+  {
+   "file": "boot_08.jpg",
+   "colour": "#6c6065"
+  },
+  {
+   "file": "boot_16.jpg",
+   "colour": "#5d5c5a"
+  },
+  {
+   "file": "boot_14.jpg",
+   "colour": "#504c57"
+  },
+  {
+   "file": "boot_15.jpg",
+   "colour": "#4d4852"
+  }
+ ],
+ "brush": [
+  {
+   "file": "brush_01.jpg",
+   "colour": "#686766"
+  },
+  {
+   "file": "brush_14.jpg",
+   "colour": "#838993"
+  },
+  {
+   "file": "brush_21.jpg",
+   "colour": "#959698"
+  },
+  {
+   "file": "brush_06.jpg",
+   "colour": "#4c4b50"
+  },
+  {
+   "file": "brush_10.jpg",
+   "colour": "#5b5d6c"
+  },
+  {
+   "file": "brush_22.jpg",
+   "colour": "#b7b7b9"
+  },
+  {
+   "file": "brush_02.jpg",
+   "colour": "#615a55"
+  }
+ ],
+ "charger": [
+  {
+   "file": "charger_01.jpg",
+   "colour": "#939997"
+  },
+  {
+   "file": "charger_08.jpg",
+   "colour": "#545158"
+  },
+  {
+   "file": "charger_28.jpg",
+   "colour": "#69696a"
+  }
+ ],
+ "clock": [
+  {
+   "file": "clock_24.jpg",
+   "colour": "#c87170"
+  },
+  {
+   "file": "clock_16.jpg",
+   "colour": "#997f69"
+  },
+  {
+   "file": "clock_12.jpg",
+   "colour": "#968d84"
+  }
+ ],
+ "controller": [
+  {
+   "file": "controller_03.jpg",
+   "colour": "#414142"
+  },
+  {
+   "file": "controller_16.jpg",
+   "colour": "#c4c6c1"
+  },
+  {
+   "file": "controller_09.jpg",
+   "colour": "#505051"
+  },
+  {
+   "file": "controller_12.jpg",
+   "colour": "#908caf"
+  },
+  {
+   "file": "controller_20.jpg",
+   "colour": "#57594e"
+  },
+  {
+   "file": "controller_26.jpg",
+   "colour": "#545158"
+  },
+  {
+   "file": "controller_13.jpg",
+   "colour": "#464748"
+  }
+ ],
+ "cookware": [
+  {
+   "file": "cookware_03.jpg",
+   "colour": "#4c4655"
+  },
+  {
+   "file": "cookware_27.jpg",
+   "colour": "#a69e9e"
+  },
+  {
+   "file": "cookware_19.jpg",
+   "colour": "#b3aca7"
+  }
+ ],
+ "cosmetics": [
+  {
+   "file": "cosmetics_06.jpg",
+   "colour": "#6e5b40"
+  },
+  {
+   "file": "cosmetics_03.jpg",
+   "colour": "#7e7c94"
+  },
+  {
+   "file": "cosmetics_14.jpg",
+   "colour": "#805450"
+  },
+  {
+   "file": "cosmetics_09.jpg",
+   "colour": "#807975"
+  },
+  {
+   "file": "cosmetics_16.jpg",
+   "colour": "#c49aa2"
+  },
+  {
+   "file": "cosmetics_18.jpg",
+   "colour": "#508652"
+  }
+ ],
+ "guitar": [
+  {
+   "file": "guitar_05.jpg",
+   "colour": "#5d627d"
+  },
+  {
+   "file": "guitar_08.jpg",
+   "colour": "#727d8a"
+  },
+  {
+   "file": "guitar_02.jpg",
+   "colour": "#787a7d"
+  }
+ ],
+ "headphones": [
+  {
+   "file": "headphones_13.jpg",
+   "colour": "#aca9aa"
+  },
+  {
+   "file": "headphones_01.jpg",
+   "colour": "#3e3b36"
+  },
+  {
+   "file": "headphones_04.jpg",
+   "colour": "#6c6b6a"
+  },
+  {
+   "file": "headphones_27.jpg",
+   "colour": "#666767"
+  }
+ ],
+ "jacket": [
+  {
+   "file": "jacket_05.jpg",
+   "colour": "#3b3c55"
+  },
+  {
+   "file": "jacket_29.jpg",
+   "colour": "#a48d7b"
+  },
+  {
+   "file": "jacket_21.jpg",
+   "colour": "#70645d"
+  },
+  {
+   "file": "jacket_07.jpg",
+   "colour": "#8f8984"
+  }
+ ],
+ "jewel": [
+  {
+   "file": "jewel_14.jpg",
+   "colour": "#a3a39d"
+  },
+  {
+   "file": "jewel_07.jpg",
+   "colour": "#a19790"
+  },
+  {
+   "file": "jewel_13.jpg",
+   "colour": "#d4b2aa"
+  },
+  {
+   "file": "jewel_08.jpg",
+   "colour": "#bdb0a7"
+  },
+  {
+   "file": "jewel_11.jpg",
+   "colour": "#b6b3a4"
+  },
+  {
+   "file": "jewel_10.jpg",
+   "colour": "#a99f94"
+  }
+ ],
+ "laptop": [
+  {
+   "file": "laptop_11.jpg",
+   "colour": "#56595c"
+  },
+  {
+   "file": "laptop_07.jpg",
+   "colour": "#777a7d"
+  },
+  {
+   "file": "laptop_02.jpg",
+   "colour": "#5c5c5f"
+  },
+  {
+   "file": "laptop_04.jpg",
+   "colour": "#7b687e"
+  },
+  {
+   "file": "laptop_12.jpg",
+   "colour": "#555557"
+  }
+ ],
+ "mouse": [
+  {
+   "file": "mouse_04.jpg",
+   "colour": "#3d3b3c"
+  },
+  {
+   "file": "mouse_09.jpg",
+   "colour": "#dbd8db"
+  },
+  {
+   "file": "mouse_01.jpg",
+   "colour": "#494749"
+  },
+  {
+   "file": "mouse_13.jpg",
+   "colour": "#686a6b"
+  },
+  {
+   "file": "mouse_07.jpg",
+   "colour": "#474545"
+  }
+ ],
+ "sandal": [
+  {
+   "file": "sandal_02.jpg",
+   "colour": "#cc8564"
+  },
+  {
+   "file": "sandal_05.jpg",
+   "colour": "#9b6448"
+  },
+  {
+   "file": "sandal_08.jpg",
+   "colour": "#525252"
+  },
+  {
+   "file": "sandal_06.jpg",
+   "colour": "#b1aaa7"
+  }
+ ],
+ "sneaker": [
+  {
+   "file": "sneaker_09.jpg",
+   "colour": "#b0afac"
+  },
+  {
+   "file": "sneaker_01.jpg",
+   "colour": "#73726c"
+  },
+  {
+   "file": "sneaker_08.jpg",
+   "colour": "#474446"
+  },
+  {
+   "file": "sneaker_10.jpg",
+   "colour": "#4e4c4f"
+  },
+  {
+   "file": "sneaker_05.jpg",
+   "colour": "#b9b7b0"
+  }
+ ],
+ "speaker": [
+  {
+   "file": "speaker_10.jpg",
+   "colour": "#979695"
+  },
+  {
+   "file": "speaker_09.jpg",
+   "colour": "#684e43"
+  },
+  {
+   "file": "speaker_14.jpg",
+   "colour": "#3e3d40"
+  },
+  {
+   "file": "speaker_01.jpg",
+   "colour": "#49494a"
+  },
+  {
+   "file": "speaker_06.jpg",
+   "colour": "#635a55"
+  }
+ ],
+ "sunglasses": [
+  {
+   "file": "sunglasses_08.jpg",
+   "colour": "#9c989c"
+  },
+  {
+   "file": "sunglasses_02.jpg",
+   "colour": "#4b563a"
+  },
+  {
+   "file": "sunglasses_22.jpg",
+   "colour": "#cbc1b9"
+  },
+  {
+   "file": "sunglasses_10.jpg",
+   "colour": "#898e7d"
+  },
+  {
+   "file": "sunglasses_24.jpg",
+   "colour": "#b6ada6"
+  }
+ ]
+}

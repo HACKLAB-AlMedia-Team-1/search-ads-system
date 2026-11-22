@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
-from pictures import product_picture
+from pictures import product_photo, product_picture
 
 from rootsight.data.german import wrong_language
 from rootsight.engine.search import SearchFilters, SearchResult
@@ -27,11 +27,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 STATIC = Path(__file__).with_name("shop")
-TYPES = {".html": "text/html", ".css": "text/css", ".js": "text/javascript"}
+TYPES = {".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".jpg": "image/jpeg"}
 PLATFORMS = ("web", "android", "ios")
 FETCH, HOME_ROW = 40, 6
 SOLD_STEPS = (5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000)
 DISCOUNTS = (10, 15, 20, 30)
+
+
+def _number(value: object, default: float = 0.0) -> float:
+    """A number typed by a person or sent by the page; anything unreadable counts as `default`."""
+    try:
+        return float(str(value).replace(",", "."))
+    except ValueError:
+        return default
 
 
 def units_sold(product_id: str, best: bool) -> int:
@@ -84,7 +92,7 @@ class Shop:
                 "rating": round(4.4 + (h % 6) / 10, 1) if best else round(3.3 + (h % 13) / 10, 1),
                 "reviews": max(sold // 6, 3), "fast": h % 3 == 0, "off": off,
                 "was": round(price / (1 - off / 100), 2) if off else None,
-                "picture": product_picture(title, colour, brand, pid),
+                "photo": product_photo(title, colour, pid), "picture": product_picture(title, colour, brand, pid),
             })  # fmt: skip
         return items
 
@@ -119,7 +127,7 @@ class Shop:
     def search(self, params: dict[str, str]) -> dict:
         """Search results plus the sponsored slot and plain-language notes about anything unusual."""
         market, platform, query = params["market"], params["device"], params["q"].strip()
-        low, high = float(params.get("min") or 0), float(params.get("max") or 0)
+        low, high = (_number(params.get(side)) for side in ("min", "max"))  # "abc" or "10,50" must not break the page
         filters = SearchFilters(
             in_stock=params.get("in_stock") == "1" or None, min_price=low or None, max_price=high or None
         )
@@ -157,8 +165,11 @@ class Shop:
 
     def add_to_cart(self, body: dict) -> dict:
         """Check live stock and price when a shopper adds a product to the cart."""
-        market, doc, platform = body["market"], int(body["doc"]), body.get("device", "web")
+        market, doc, platform = body["market"], _number(body.get("doc"), -1), body.get("device", "web")
         cat = self.rt.pipeline.sim.engine.catalogues[market]
+        doc = int(doc)
+        if not 0 <= doc < len(cat.stock):  # e.g. a cart line that came from another country's catalogue
+            return {"ok": False}
         common = {
             "market": market,
             "platform": platform,
@@ -170,7 +181,7 @@ class Shop:
             self.rt.log_ux("cart_unavailable", **common)
             return {"ok": False}
         price = round(float(cat.price[doc]), 2)
-        changed = abs(price - float(body["price"])) > 0.005
+        changed = abs(price - _number(body.get("price"), price)) > 0.005
         if changed:
             self.rt.log_ux("price_mismatch", **common)
         self.rt.log_ux("add_to_cart", value=price, **common)
@@ -180,7 +191,9 @@ class Shop:
         """Check live stock of every cart item before the order is placed; sold-out items block the order."""
         market, platform = body["market"], body.get("device", "web")
         cat = self.rt.pipeline.sim.engine.catalogues[market]
-        docs, session = [int(d) for d in body.get("docs", [])], str(body.get("sid", ""))[:40]
+        docs, session = [int(_number(d, -1)) for d in body.get("docs", [])], str(body.get("sid", ""))[:40]
+        if any(not 0 <= d < len(cat.stock) for d in docs):
+            return {"ok": False, "unavailable": docs}
         unavailable = sorted({d for d in docs if cat.stock[d] <= 0 or cat.delisted[d]})
         if unavailable:
             self.rt.log_ux("cart_unavailable", market, platform, session=session)
@@ -226,7 +239,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.shop.search({"q": "", **params}))
             else:
                 file = STATIC / ("index.html" if url.path == "/" else url.path.lstrip("/"))
-                if file.suffix in TYPES and file.is_file() and file.parent == STATIC:
+                if file.suffix in TYPES and file.is_file() and file.parent in (STATIC, STATIC / "photos"):
                     self._send(200, file.read_bytes(), TYPES[file.suffix])
                 else:
                     self._send(404, b"not found", "text/plain")

@@ -23,7 +23,7 @@ The dashboard opens at http://localhost:8501 and starts the web shop at http://l
 **Monitoring is always live.** The simulated clock starts by itself when the dashboard loads (one hour every 2 seconds; *Clock speed* offers
 Slow / Normal / Fast) and never pauses: there is no start or stop button. The healthy shop runs all the time, so the tiles and charts keep updating.
 
-**Demo in three clicks:** *Shopper journey* opens on Step 1; press **Simulate it**. The failure is injected into the running stream, the step's
+**Demo in three clicks:** *Shopper journey* opens on the first case; press **Simulate it**. The failure is injected into the running stream, the step's
 chart appears, and *What the agent found* shows live what the agent is doing (scoring, anomaly, case, checks) until its finding appears:
 a plain-language summary, the cost so far, the failed check, the *Possible next action*, and every investigation step with the tool it used,
 why, one sentence with what it found and one collapsed query (open it to see the SQL and the rows it returned). Open **See it in the store**
@@ -48,7 +48,7 @@ words on *Add a scenario*: the agent maps it onto a failure the simulator can pr
 | ~116k Amazon products, real EN/ES/JP queries and relevance labels (ESCI). The German store is a demo: US products with word-by-word translated queries | Users, sessions, clicks, carts, orders |
 | A real BM25 search engine with per-language analyzers; the failures are real bugs in it | Ads: 3 campaigns, EUR 1,000/day, pacing |
 | Statistics, the metric graph, the evidence checklist, incident tracking | Release / config / job event log (with harmless decoys), prices, stock |
-| Your own actions in the ShopLens store: they are added to the monitored numbers (one action stands for 100 shoppers) | Shop pictures (drawn in code as SVG, no photos), sold counts, ratings, review counts, list prices and discounts: made up, fixed per product |
+| Your own actions in the ShopLens store: they are added to the monitored numbers (one action stands for 100 shoppers) | Shop pictures (free-licence photos of the product type for 17 types, drawn in code as SVG for the rest; never the exact item), sold counts, ratings, review counts, list prices and discounts: made up, fixed per product |
 
 ## Scenarios
 
@@ -77,7 +77,8 @@ python scripts/smoke_ui.py  :: renders every Streamlit page headless
 
 **Step-by-step run and test guide: `docs/RUN_DEMO.md`.**
 
-`SETUP.md` (installs), `PLAN.md` (build plan), `docs/algorithm.md` (how it decides), `docs/SCENARIOS.md`, `docs/DOSSIER.md`, `docs/MEMORY.md` (decisions and status).
-An optional local or cloud model (any OpenAI-compatible endpoint) can drive the investigator: set `LLM_MODE=live`, `LLM_BASE_URL` and the two model names in `.env`.
+`SETUP.md` (installs), `PLAN.md` (build plan), `docs/algorithm.md` (how it decides), `docs/SCENARIOS.md`, `docs/DOSSIER.md`, `docs/MEMORY.md` (decisions and status), `docs/MODEL_COMPARISON.md` (rules vs local vs cloud models, measured).
+An optional local or cloud model (any OpenAI-compatible endpoint, or the models of a Devin account with `LLM_BASE_URL=devin-cli`) can drive the investigator: set `LLM_MODE=live`, `LLM_BASE_URL` and the two model names in `.env`.
+`python scripts/compare_models.py` measures the rule-based agent against local and cloud models on the same cases. Measured on 22 Nov 2026 (one run each): the rules find and confirm all 9 causes in 0.3 s; Claude Opus also confirms all 9 without a recipe (38 s); only models can read plain descriptions well (12 of 12 against 4 of 12 for keywords) and write a metric's SQL from words (6 of 6; the rules cannot). So the product combines them: rules first, a model for the language work, code for the numbers and checks. Details and limits: `docs/MODEL_COMPARISON.md`.
 With a model, the agent also rewrites each finding in plain words (rejected if it uses a number that is not in the tool results) and reads
 user-written scenarios. The rule-based investigator and the code-built wording are the default and the fallback.

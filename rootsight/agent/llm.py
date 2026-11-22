@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import subprocess
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +18,12 @@ from rootsight.store.db import Database
 logger = logging.getLogger(__name__)
 
 TIMEOUT_SECONDS = 300
+DEVIN_CLI = "devin-cli"  # LLM_BASE_URL value: use the models of a logged-in Devin CLI instead of an HTTP endpoint
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+CLI_RULES = ("You are used as a plain language model inside another program. Do not use any of your own tools: do not read "
+             "files, do not run commands, do not search. Answer only from the text below.")  # fmt: skip
+CLI_TOOL_REPLY = ('Reply with exactly ONE JSON object and nothing else. To call a tool: {"thought": "<one short sentence>", '
+                  '"tool": "<tool name>", "arguments": {<arguments>}}. When no further tool is needed: {"final": "<one sentence>"}.')  # fmt: skip
 RECORDINGS_DIR = Path(__file__).with_name("recordings")
 
 
@@ -59,6 +68,8 @@ class LLMClient:
         s = self.settings
         if not (s.llm_base_url and self._model(role)):
             raise LLMUnavailable("LLM_BASE_URL and the model name must be set in .env")
+        if s.llm_base_url == DEVIN_CLI:
+            return self._post_cli(role, messages, tools)
         headers = {"Authorization": f"Bearer {s.llm_api_key}"} if s.llm_api_key else {}
         body = {
             "model": self._model(role),
@@ -68,6 +79,8 @@ class LLMClient:
         }
         if tools:
             body["tools"] = tools
+        if s.llm_extra_body:  # provider-specific switches, e.g. {"reasoning_effort": "none"} for a local thinking model
+            body.update(json.loads(s.llm_extra_body))
         try:
             response = httpx.post(
                 f"{s.llm_base_url.rstrip('/')}/chat/completions",
@@ -78,8 +91,58 @@ class LLMClient:
             response.raise_for_status()
             data = response.json()
             return data["choices"][0]["message"], data.get("usage", {})
+        except httpx.HTTPStatusError as exc:  # the provider's own words say what is wrong (never contains our key)
+            detail = " ".join(exc.response.text.split())[:200]
+            raise LLMUnavailable(f"model call failed: HTTP {exc.response.status_code} {detail}") from exc
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             raise LLMUnavailable(f"model call failed: {type(exc).__name__}") from exc
+
+    def _post_cli(self, role: str, messages: list[dict], tools: list[dict] | None) -> tuple[dict, dict]:
+        """One model turn through the Devin CLI (`devin -p`), for accounts that have Devin but no model API key.
+
+        The CLI has no tool-calling API, so the conversation and the tool list are written into one prompt and the
+        model answers with one JSON object, which is turned back into an OpenAI-style message. No key is sent
+        anywhere: the CLI uses its own login (`devin auth login`). Tokens are estimated (characters / 4).
+        """
+        parts = [CLI_RULES]
+        for m in messages:
+            if m["role"] == "assistant":
+                calls = [f"{c['function']['name']}({c['function']['arguments']})" for c in m.get("tool_calls") or []]
+                parts.append("YOU SAID: " + (m.get("content") or "") + ("\nYOU CALLED: " + "; ".join(calls) if calls else ""))
+            else:
+                parts.append({"system": "INSTRUCTIONS", "tool": "TOOL RESULT"}.get(m["role"], "USER") + ":\n" + str(m["content"]))
+        if tools:
+            listed = [{"name": t["function"]["name"], "description": t["function"]["description"],
+                       "arguments": t["function"]["parameters"]["properties"]} for t in tools]  # fmt: skip
+            parts += ["TOOLS YOU MAY CALL:\n" + json.dumps(listed), CLI_TOOL_REPLY]
+        prompt = "\n\n".join(parts)
+        with tempfile.TemporaryDirectory() as empty:  # an empty folder: nothing for the CLI's own agent to explore
+            file = Path(empty) / "prompt.txt"
+            file.write_text(prompt, encoding="utf-8")
+            command = [self.settings.devin_cli, "-p", "--model", self._model(role), "--prompt-file", str(file),
+                       "--respect-workspace-trust", "false"]  # fmt: skip
+            try:
+                done = subprocess.run(command, check=False, cwd=empty, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                      timeout=TIMEOUT_SECONDS, stdin=subprocess.DEVNULL)  # fmt: skip
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise LLMUnavailable(f"the Devin CLI did not answer ({type(exc).__name__}); check DEVIN_CLI in .env") from exc
+        text = ANSI.sub("", done.stdout).strip()
+        if "log in" in (text + done.stderr).lower():
+            raise LLMUnavailable("the Devin CLI is not logged in; run `devin auth login` once")
+        if done.returncode != 0 or not text:
+            raise LLMUnavailable(f"the Devin CLI failed: {' '.join((done.stderr or text).split())[:200]}")
+        usage = {"prompt_tokens": len(prompt) // 4, "completion_tokens": len(text) // 4}
+        if not tools:
+            return {"role": "assistant", "content": text}, usage
+        try:
+            reply = json.loads(text[text.index("{") : text.rindex("}") + 1])
+        except ValueError as exc:
+            raise LLMUnavailable("the Devin CLI model did not answer with JSON") from exc
+        if not reply.get("tool"):
+            return {"role": "assistant", "content": str(reply.get("final") or text)}, usage
+        call = {"id": f"cli-{len(messages)}", "type": "function",
+                "function": {"name": str(reply["tool"]), "arguments": json.dumps(reply.get("arguments") or {})}}  # fmt: skip
+        return {"role": "assistant", "content": str(reply.get("thought") or ""), "tool_calls": [call]}, usage
 
     def _path(self, case_id: str) -> Path:
         return self.recordings / f"{case_id}.json"

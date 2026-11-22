@@ -8,7 +8,8 @@
       "Exec(cp)",
       "Exec(sleep)",
       "Exec(\"C:/Users/aadhi/anaconda3/envs/rootsight/python.exe\")",
-      "Exec(netstat)"
+      "Exec(netstat)",
+      "Exec(cd)"
     ]
   }
 }

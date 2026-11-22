@@ -3,7 +3,7 @@
 
 # --- AI + web ---
 anthropic>=0.40          # Claude API client (agent + relevance judge + onboarding agent)
-httpx>=0.27              # HTTP client, used to call the Linkup web search API
+httpx>=0.27              # HTTP client: Linkup web search and the optional language model (local Ollama or cloud)
 python-dotenv>=1.0       # loads API keys from the .env file
 pydantic>=2.6            # typed data objects (reports, tool results, configs)
 pyyaml>=6.0              # reads the metric graph and scenario files (.yaml)
@@ -31,6 +31,6 @@ streamlit-agraph>=0.0.45 # interactive graph drawing inside Streamlit
 plotly>=5.20             # charts with expected bands
 
 # --- dev ---
-tqdm>=4.66               # progress bars for data preparation
+tqdm>=4.66               # progress bars (data preparation, scripts/compare_models.py)
 pytest>=8.0              # automated tests
 ruff>=0.5                # code formatter + linter

@@ -8,10 +8,12 @@ pattern, tilt, backdrop), so two products of one type look different and one pro
 from __future__ import annotations
 
 import html
+import json
 import re
 import zlib
 from collections.abc import Callable
 from functools import cache, lru_cache
+from pathlib import Path
 from typing import NamedTuple
 
 # (words in the title, symbol, kind text, drawing). Order matters: the first match wins, so real product nouns
@@ -1567,6 +1569,37 @@ def _kind(low: str) -> tuple[str, str | None, str]:
             if pattern.search(text):
                 return symbol, search, key
     return "📦", None, "parcel"
+
+
+PHOTO_DIR = Path(__file__).with_name("shop") / "photos"
+NEAREST = 3  # a product gets one of the photos closest to its own colour, so same-type products still differ
+
+
+@cache
+def _photos() -> dict[str, list[tuple[str, tuple[int, int, int]]]]:
+    """Product type -> its free-licence photos (file name, main colour); empty when the photo set is not installed."""
+    manifest = PHOTO_DIR / "manifest.json"
+    if not manifest.is_file():
+        return {}
+    rgb = lambda colour: tuple(int(colour[i : i + 2], 16) for i in (1, 3, 5))
+    return {kind: [(p["file"], rgb(p["colour"])) for p in photos] for kind, photos in json.loads(manifest.read_text("utf-8")).items()}
+
+
+def product_photo(title: str, colour: str, product_id: str) -> str | None:
+    """Address of a real photo of this product's type (people-free, free licence), or None when the type has none.
+
+    A photo shows the type of product, not the exact item. The one closest to the product's named colour is preferred.
+    """
+    low = (title or "").lower()
+    photos = _photos().get(_kind(low)[2])
+    if not photos:
+        return None
+    h = zlib.crc32(str(product_id).encode())
+    named = _named((colour or "").lower()) or _named(low)
+    if named:
+        want = tuple(int(named[0][i : i + 2], 16) for i in (1, 3, 5))
+        photos = sorted(photos, key=lambda p: sum((a - b) ** 2 for a, b in zip(p[1], want, strict=True)))[:NEAREST]
+    return f"/photos/{photos[(h >> 7) % len(photos)][0]}"
 
 
 def kind_of(title: str) -> tuple[str, str | None]:

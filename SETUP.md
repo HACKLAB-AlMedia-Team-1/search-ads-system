@@ -130,6 +130,13 @@ Ollama `http://127.0.0.1:11434/v1` or a cloud provider), `LLM_API_KEY` (if the p
 `LLM_MODEL_AGENT` (drives the investigation) and `LLM_MODEL_FAST` (plain-language findings, reading user-written scenarios).
 If the model is unreachable the app falls back to the rule-based agent. Keep `offline` while running the tests.
 
+Local model (optional): install Ollama (`winget install Ollama.Ollama`), then in one PowerShell window run
+`$env:OLLAMA_MODELS = "<project folder>\models\ollama"` and `& "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" serve`, and in a second one
+`& "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" pull qwen3.5:9b` (and `qwen3.5:4b`). The weights then live in `models/ollama` inside the
+project (git-ignored, about 10 GB). No model API key but a Devin account: set `LLM_BASE_URL=devin-cli`, `LLM_MODEL_AGENT=opus`,
+`LLM_MODEL_FAST=sonnet`, `DEVIN_CLI=<full path of devin.exe>` and run `devin auth login` once. A Devin API key (`apk_...`, `cog_...`) cannot
+call a model and must not be put in `LLM_API_KEY`. To compare the options: `python scripts/compare_models.py --help`.
+
 **Why:** `.env` may hold secrets and is listed in `.gitignore`, so it is never uploaded to GitHub.
 
 ---

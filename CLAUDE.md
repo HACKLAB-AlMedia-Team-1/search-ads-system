@@ -31,8 +31,16 @@ Then state in 3–5 bullets: current phase, what is already done, what you will 
 - During development and in all tests use `LLM_MODE=offline` and `LINKUP_MODE=offline`.
 - Never run anything with `LLM_MODE=live|record` or `LINKUP_MODE=live` unless the human says so in this session.
 - Every LLM call goes through `rootsight/agent/llm.py` (one place handles modes, caching, recording and token logging).
-  Current callers: the investigator (`agent` model), `agent/narrate.py` (plain-language finding, `fast` model) and
-  `sim/custom.py` (reading user-written scenarios, `fast` model). Each has a rule-based fallback, so offline must keep working.
+  Current callers: the investigator (`agent` model), `agent/narrate.py` (plain-language finding, `fast` model),
+  `sim/custom.py` (reading user-written scenarios, `fast` model), `graph/onboarding.py` (`propose_with_llm`: metric links;
+  `draft_metric`: a metric's SQL from a plain description). Each has a rule-based fallback, so offline must keep working;
+  the only exception is `draft_metric` (rules cannot write SQL), where the page says a model is needed.
+- Model routes: an OpenAI-compatible endpoint (`LLM_BASE_URL`, e.g. a local Ollama) or `LLM_BASE_URL=devin-cli` (the Devin
+  CLI's own login). A key is only ever sent to the provider that issued it; a Devin key (`apk_`, `cog_`) cannot call a model.
+- Whatever a model produces is checked in code before it counts: evidence checklist, link validation on history, SQL run on
+  history. Model-written SQL is shown to the person before it is used (it can run and still be wrong).
+- Comparing rules with models: `python scripts/compare_models.py` (see `docs/MODEL_COMPARISON.md`). It uses live models, so
+  run it only when the human asks.
 - Never print or log API keys. Keys come only from `.env` via `rootsight/config.py`.
 
 ## 4. How to work

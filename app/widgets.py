@@ -274,9 +274,10 @@ def scenario_card(rt: Runtime, sid: str, step: int | None = None, palette: dict 
     notices = rt.notices(sid) if not rt.scenarios[sid].event_log or rt.scenarios[sid].calendar else []
     with st.container(border=True):
         head, action = st.columns([4, 1.4], vertical_alignment="center")
-        prefix = f"Step {step} · " if step else f"{sid} · "
+        prefix = "" if step else f"{sid} · "  # the journey shows only what the case is; the catalogue also its id
         badge = ('<span class="badge bad">broken now</span>' if active else
                  '<span class="badge good">agent found it</span>' if finding else "")  # fmt: skip
+        info = {key: html.escape(str(text)) for key, text in info.items()}  # user-written scenarios are plain text, not HTML
         head.markdown(f"#### {prefix}{info['title']} {badge}", unsafe_allow_html=True)
         if active:
             action.button("End Simulation", key=f"end_{sid}_{step}", width="stretch", on_click=rt.end_simulation, args=(sid,))

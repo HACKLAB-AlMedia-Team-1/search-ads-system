@@ -64,8 +64,8 @@ Full spec and the **differential-diagnosis table** are in `docs/SCENARIOS.md`.
 ## 5. Architecture (short)
 
 Data prep → **ShopLens** engine + simulator → DuckDB (hourly facts, ads, component health, search samples, events,
-data arrivals) → **Watcher** (statistics, no LLM) → **Investigator agent** (Claude Sonnet with tool calling; Claude Haiku
-as relevance judge; Linkup web check) → **Evidence checklist** (code) → **Incidents** → **Streamlit** UI (control room,
+data arrivals) → **Watcher** (statistics, no LLM) → **Investigator agent** (as built: a rule-based recipe by default; optionally a
+language model with tool calling, local or cloud; Linkup web check) → **Evidence checklist** (code) → **Incidents** → **Streamlit** UI (control room,
 shop, graph, incidents, add metric). Full diagram + file layout in `PLAN.md` §0.
 
 ## 6. The algorithm (what judges asked us to explain)
@@ -88,9 +88,10 @@ SUPPORTED → stop and report; LIKELY/HYPOTHESIS → keep looking until the tool
 what's missing.
 
 **Where the LLM is used, and where not:** statistics and the checklist are code (reliable, cheap, no invented numbers).
-Claude decides **which tool to call next**, judges **search relevance** on real result samples (something statistics
-can't do), interprets **logs/events** and writes the **story**. The onboarding agent proposes graph links for new
-metrics; code validates them.
+As built (22 Nov 2026): by default no model runs and a rule recipe chooses the tools. With a model switched on, the model
+decides **which tool to call next**, rewords the **story**, reads a person's **scenario description**, proposes graph
+links for new metrics and can write a metric's **SQL from words**; code validates all of it. Search relevance is judged
+in code (word overlap, cross-checked with the ESCI labels). Measured comparison: `docs/MODEL_COMPARISON.md`.
 
 ## 7. Demo storyline (3-min video)
 
@@ -118,10 +119,10 @@ metrics; code validates them.
 
 ## 9. Tools and budget
 
-- **Claude API ($25):** Sonnet = investigator; Haiku = judge + onboarding. Offline mode for dev/tests; record once, replay for the video.
+- **Language model:** optional. Default is the rule-based agent (no key, no cost). Measured alternatives: local Qwen 3.5 (4B, 9B) through Ollama, Claude Opus and Sonnet through a Devin account. See `docs/MODEL_COMPARISON.md`.
 - **Linkup ($20):** `web_check` only (calendar / outside context), cached.
 - **Devin:** isolated phases (Phase 2 engine, Phase 8 UI) on branches → PRs we review.
-- **Laptop:** CPU only. No local models.
+- **Laptop:** everything runs on CPU; the optional local models use the laptop GPU (RTX 4070, 8 GB).
 
 ## 10. Risks and fallbacks
 
@@ -130,6 +131,7 @@ metrics; code validates them.
 | ESCI download slow/fails | GitHub LFS mirror (SETUP Step 6); worst case: use a 20k-product subset |
 | Live agent unstable on stage/video | `replay` mode from recordings |
 | Running out of API credit | offline policy agent gives the same result; LLM only for recorded runs |
+| A model gives a wrong answer | Numbers, evidence checklist, link validation and SQL test are code; every model call has a rule fallback |
 | UI live refresh flaky | the demo script advances time in steps on button click |
 | Time | Cut order in PLAN.md |
 

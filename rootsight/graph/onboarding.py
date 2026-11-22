@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import sqlglot
 import yaml
 from sqlglot import exp
@@ -25,6 +26,11 @@ MIN_R = 0.6
 MAX_LAG = 2
 VALIDATION_DAYS = 7
 DEFAULT_WEIGHT = 0.5
+SQL_TABLES = ("fact_hourly", "ads_hourly", "component_hourly")
+SQL_NOTES = ("fact_hourly: shop funnel counts, one row per hour, market (US/DE/ES/JP), platform (web/android/ios) and source "
+             "(organic/paid). ads_hourly: one row per hour and campaign, money in EUR. component_hourly: technical health "
+             "values (columns component, scope, metric, value).")  # fmt: skip
+SQL_EXAMPLES = ("search_ctr", "zero_result_rate", "ad_spend", "in_stock_rate_top")
 
 
 @dataclass
@@ -121,6 +127,41 @@ def propose_with_llm(
                 for i in items if i["source"] in graph.specs | {name: 0} and i["target"] in graph.specs | {name: 0}]  # fmt: skip
     except (ValueError, KeyError, TypeError) as exc:
         raise LLMUnavailable("the model returned no usable edges") from exc
+
+
+def draft_metric(llm: LLMClient, db: Database, graph: MetricGraph, wish: str, now: datetime) -> dict[str, str]:
+    """Let the fast model write a metric (name and SQL) from a plain description. Rules cannot do this.
+
+    The result is only a draft: `try_sql` runs it on history, and a person still places it with `onboard`.
+    Raises LLMUnavailable when the model gives nothing usable.
+    """
+    columns = {t: [c for c in db.df(f"SELECT * FROM {t} LIMIT 0").columns if c != "ts"] for t in SQL_TABLES}
+    examples = [f"{name}: {graph.metric(name).sql}" for name in SQL_EXAMPLES if name in graph.specs]
+    prompt = ("Write ONE metric for a web shop's monitoring database (DuckDB). The SQL has a fixed short form: an aggregate "
+              "expression, then FROM one table, then an optional WHERE. No SELECT keyword, no GROUP BY, no ORDER BY and no "
+              "time filter: the system adds the hours, markets and devices itself. Guard every division with NULLIF(..., 0).\n"
+              f"Tables and columns: {json.dumps(columns)}\n{SQL_NOTES}\nExisting metrics as examples:\n" + "\n".join(examples)
+              + f"\nThe metric to write: {wish}\n"
+              'Reply with JSON only: {"name": "<lowercase_with_underscores>", "sql": "<expression FROM table [WHERE ...]>"}')  # fmt: skip
+    reply = llm.chat("fast", [{"role": "user", "content": prompt}], None, "draft-metric", now)["content"]
+    try:
+        body = json.loads(reply[reply.index("{") : reply.rindex("}") + 1])
+        name = re.sub(r"[^a-z0-9_]+", "_", str(body["name"]).lower()).strip("_")[:40]
+        sql = " ".join(str(body["sql"]).split()).rstrip(";")
+    except (ValueError, KeyError, TypeError) as exc:
+        raise LLMUnavailable("the model returned no usable SQL") from exc
+    return {"name": name, "sql": sql[7:] if sql.lower().startswith("select ") else sql}
+
+
+def try_sql(db: Database, sql: str, end: datetime) -> tuple[pd.DataFrame | None, str]:
+    """Run a metric's SQL on the last 7 days: (hourly values, "") or (None, why it cannot be used)."""
+    try:
+        frame = metric_series(db, MetricSpec("draft", "", sql, "ratio", "", (), 0), end - timedelta(days=VALIDATION_DAYS), end)
+    except Exception as exc:  # noqa: BLE001 - any parse/SQL error is told to the person instead of crashing
+        return None, f"the SQL does not run on the history: {' '.join(str(exc).split())[:200]}"
+    if frame["value"].notna().sum() < 24:
+        return None, "the SQL returns almost no values over the last 7 days"
+    return frame, ""
 
 
 def _correlation(

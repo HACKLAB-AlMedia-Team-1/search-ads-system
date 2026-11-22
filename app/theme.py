@@ -32,9 +32,9 @@ CSS = """
 .kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap:12px; margin-bottom: 14px; }
 .tile { background: var(--surface); border:1px solid var(--border); border-top: 4px solid var(--good); border-radius: 12px; padding: 12px 14px; }
 .tile.warn { border-top-color: var(--warn); } .tile.bad { border-top-color: var(--bad); }
-.tile .label { color: var(--muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; white-space:nowrap; }
+.tile .label { color: var(--muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .tile .value { font-size: 1.45rem; font-weight: 700; white-space:nowrap; line-height:1.3; }
-.tile .sub { font-size: .78rem; color: var(--muted); white-space:nowrap; }
+.tile .sub { font-size: .78rem; color: var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .tile .delta { font-size: .78rem; font-weight: 600; } .tile.good .delta { color: var(--good); } .tile.warn .delta { color: var(--warn); } .tile.bad .delta { color: var(--bad); }
 /* ---------- badges and cards ---------- */
 .badge { display:inline-block; padding: 2px 9px; border-radius: 999px; font-size: .72rem; font-weight: 700; color:#fff; vertical-align: middle; }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 
 import streamlit as st
@@ -42,7 +43,7 @@ def live() -> None:
     else:
         first = json.loads(open_incidents["report_json"].iloc[0])["report"]
         st.markdown(
-            f'<div class="banner bad"><span class="dot"></span><div><b>{len(open_incidents)} open incident(s)</b><small>{first["headline"]}</small></div></div>',
+            f'<div class="banner bad"><span class="dot"></span><div><b>{len(open_incidents)} open incident(s)</b><small>{html.escape(first["headline"])}</small></div></div>',
             unsafe_allow_html=True,
         )
     st.markdown("##### Money")
@@ -71,7 +72,7 @@ def live() -> None:
         for r in cases.itertuples():
             cls, label = KIND[r.kind]
             st.markdown(
-                f'<div class="card"><span class="badge {cls}">{label}</span> <small>{r.ts:%a %H:%M}</small><br>{r.headline}</div>',
+                f'<div class="card"><span class="badge {cls}">{label}</span> <small>{r.ts:%a %H:%M}</small><br>{html.escape(r.headline)}</div>',
                 unsafe_allow_html=True,
             )
     with right:

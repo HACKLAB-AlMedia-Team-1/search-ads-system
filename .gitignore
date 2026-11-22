@@ -29,3 +29,9 @@ Thumbs.db
 data/*.yaml
 data/*.duckdb
 .shots/
+
+# local LLM weights (Ollama, several GB; kept in the project folder on purpose, never committed)
+models/
+
+# raw results and server log of scripts/compare_models.py (the tables go to docs/model_comparison_results.md)
+data/model_comparison/

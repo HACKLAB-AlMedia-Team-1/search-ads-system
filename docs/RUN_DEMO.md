@@ -73,9 +73,10 @@ The folder `data/cache/` holds only the optional Linkup web-answer cache. It is 
 Open the dashboard. You are on the **Shopper journey** page. The clock is already running (see section 2).
 *Clock speed* above the tiles is the only clock control: Slow (3 s), Normal (2 s, the default) or Fast (1 s of real time per simulated hour).
 
-1. *Demo step* (under the KPI tiles) opens on **Step 1**. You can pick **Step 2**, **Step 3** or **All steps**; the page remembers your choice
-   while you visit other pages (a browser refresh starts again on Step 1).
-2. In **Step 1 - Foreign-language searches fail**, press **Simulate it**. The failure is injected into the running stream, in the country
+1. *Demo case* (under the KPI tiles) opens on the first case, **Foreign-language searches fail**. You can pick **Ad budget burns by
+   mid-morning**, **Top sellers out of stock** or **All cases**; the page remembers your choice while you visit other pages (a browser
+   refresh starts again on the first case). Below, "step 1/2/3" means these three cases in this order.
+2. In **Foreign-language searches fail**, press **Simulate it**. The failure is injected into the running stream, in the country
    the store "Deliver to" is set to (Germany: English searches fail; US: German searches fail). Every simulation starts from a normal shop:
    the ad budget is put back on plan at this moment too.
 3. The step's chart appears. Per hour it shows the share of searches that found products in the broken country (orange) against the normal
@@ -110,9 +111,9 @@ Open the dashboard. You are on the **Shopper journey** page. The clock is alread
    a few seconds later (the step says so). Until then the step shows the incident as *open*, with the note "The failure is switched off. The agent closes the
    incident once it has seen three normal hours." An incident whose cause was fixed with End Simulation is never reopened: the same failure
    simulated again is a new incident with a fresh report.
-8. Repeat with **Step 2** and **Step 3** (top sellers out of stock). The Step 2 chart shows the whole simulated day from 00:00 to 24:00:
+8. Repeat with the second and the third case (top sellers out of stock). The chart of the second case shows the whole simulated day from 00:00 to 24:00:
    cumulative ad spend vs. planned spend vs. the fixed €250 budget, with markers where you pressed Simulate it and End Simulation. If you
-   end Step 2 and simulate it again on the same simulated day, the "actual spend" line starts on the plan line again and the rest of the
+   end the second case and simulate it again on the same simulated day, the "actual spend" line starts on the plan line again and the rest of the
    day's €250 budget is available again: the overspend of the earlier simulation is not carried over.
 
 What you should see:
@@ -130,7 +131,7 @@ shows a small sold count ("50+ sold").
 
 Tips:
 
-- Step 2 is easiest to see in the simulated morning (simulated time is in the sidebar): the campaign then spends about €25 per hour, the
+- The second case (ad budget) is easiest to see in the simulated morning (simulated time is in the sidebar): the campaign then spends about €25 per hour, the
   €250 budget is gone about nine simulated hours later (roughly 20 seconds at Normal speed), and the sponsored product disappears from
   the open store tab by itself. Pressed at night, the failure starts at 07:00. The clock does not wait for you.
 - Several simulations can run together, but the reports are clearer one at a time.
@@ -151,7 +152,7 @@ Tips:
 | **Control room** | Live all the time, also when no simulation runs: the key numbers against what is expected (green / amber / red), a chart with the expected range, alerts and the latest finding. Filter by country. It has the *Clock speed* choice too. |
 | **Incidents** | One row per problem. Pick one to read the full report or download it. |
 | **Metric graph** | Pick a metric to see what feeds into it. Red = unusual right now. |
-| **Add or edit a metric** | Both tabs have the same three fields: name, description, SQL. *Add a metric*: type them (for example name `no_click_search_rate`, SQL `(SUM(searches) - SUM(searches_with_click)) / NULLIF(SUM(searches), 0) FROM fact_hourly`), press **Place it in the graph**. The system proposes the links and checks them on history; weak links are marked "Needs a human look". *Edit a metric*: the name is a dropdown of every metric (built-in too); change its description or SQL, press **Save the change**. The SQL is run on 7 days of history, the metric's links are re-checked, and the change is written to `rootsight/graph/metrics.yaml` (built-in) or `data/metrics_custom.yaml` (added). |
+| **Add or edit a metric** | Both tabs have the same three fields: name, description, SQL. With a language model switched on (`LLM_MODE=live`) you can also describe the metric in words and let the model write the SQL; it is run on 7 days of history and put into the form for you to read first (a statement can run and still be wrong). *Add a metric*: type them (for example name `no_click_search_rate`, SQL `(SUM(searches) - SUM(searches_with_click)) / NULLIF(SUM(searches), 0) FROM fact_hourly`), press **Place it in the graph**. The system proposes the links and checks them on history; weak links are marked "Needs a human look". *Edit a metric*: the name is a dropdown of every metric (built-in too); change its description or SQL, press **Save the change**. The SQL is run on 7 days of history, the metric's links are re-checked, and the change is written to `rootsight/graph/metrics.yaml` (built-in) or `data/metrics_custom.yaml` (added). |
 | **Add a scenario** | Write the title, an id, what breaks, where, and what a shopper sees; press **Let the agent check it**. The agent picks the matching failure the simulator can produce and writes what the numbers will do and what the agent should do. **Save the scenario** writes `scenarios/<ID>.yaml`; it appears on *All scenarios → Your scenarios*. If no simulator failure matches (or the country/device is not possible), you get the reason instead. |
 
 In the store you can also switch the country (top left), the device (Web / Android app / iOS app) and light/dark mode (moon button).
@@ -201,6 +202,19 @@ python scripts/smoke_ui.py
 
 ---
 
+## 6b. Compare the rule-based agent with language models (optional)
+
+```bat
+python scripts/compare_models.py --check
+python scripts/compare_models.py --only rules qwen3.5:4b qwen3.5:9b
+python scripts/compare_models.py --only opus sonnet
+```
+
+Needs the local models in `models/ollama` and, for `opus` / `sonnet`, a logged-in Devin CLI (`SETUP.md`, Step 4). Close the app first. Each run shows a live progress line and writes `docs/model_comparison_results.md`; what the numbers mean is in `docs/MODEL_COMPARISON.md`.
+On *Add or edit a metric*, "Or describe it in words and let the model write the SQL" works only with `LLM_MODE=live`.
+
+---
+
 ## 7. If something goes wrong
 
 | Problem | Fix |
@@ -225,7 +239,9 @@ python scripts/smoke_ui.py
 - Prices, stock, ratings, ads and shoppers are simulated. Products, search queries and relevance labels are real Amazon data.
 - Sold counts, review counts, list prices and discounts in the store are made up, but fixed per product: a product shows the same numbers
   on every visit. Review counts follow the sold numbers.
-- Product pictures are drawn in code as SVG (`app/pictures.py`): no photos, no people, nothing downloaded. The product type is read from
+- Product pictures: 17 product types (headphones, sneakers, boots, laptops, ...) show real free-licence photos from Wikimedia Commons
+  (`app/shop/photos/`, credits linked in the shop footer). A photo shows the type of product, not the exact item, and one type has only
+  3-8 photos, so they repeat on a results page. Every other product is drawn in code as SVG (`app/pictures.py`): no people, nothing downloaded. The product type is read from
   the product noun in the title (so "Lightweight ... Pants" shows pants, not a lamp). The picture uses the product's own colours, its pack
   size and small per-product variations, so two products of one type look different. Why drawn: the dataset has no images; Amazon's image
   server returns a blank pixel for product ids (only books work); a keyword photo service (loremflickr) answered with errors; free-licence

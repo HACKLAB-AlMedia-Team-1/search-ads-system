@@ -123,6 +123,12 @@ TOOL_SCHEMAS = [
 ]
 
 
+HYPOTHESIS_REMINDER = 4  # tool calls before the limit at which a model without a tested hypothesis is reminded
+REMINDER = ("You have few tool calls left and have not tested a cause yet. Call record_hypothesis now for the most likely "
+            "cause (cause, metric, segment, and the event_id from get_events), then estimate_impact, then finish.")  # fmt: skip
+TOOL_NAMES = frozenset(t["function"]["name"] for t in TOOL_SCHEMAS)
+
+
 class Investigator:
     """Investigates cases. With a model configured it lets the model pick tools; otherwise (or on failure) it follows rules."""
 
@@ -150,7 +156,7 @@ class Investigator:
         if self.llm.available:
             try:
                 self._run_llm(case)
-            except LLMUnavailable as exc:
+            except (LLMUnavailable, KeyError, TypeError, ValueError) as exc:  # also a malformed model reply
                 logger.warning("Model unavailable (%s); using the rule-based investigator", exc)
                 self.tb.start(case)
                 offline_policy.investigate(self.tb, case)
@@ -166,19 +172,26 @@ class Investigator:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps(brief)},
         ]
-        for _ in range(self.settings.max_tool_calls):
+        for turn in range(self.settings.max_tool_calls):
+            if turn == self.settings.max_tool_calls - HYPOTHESIS_REMINDER and not self.tb.notes["hypotheses"]:
+                # smaller models keep exploring; without a tested hypothesis there is no finding at all
+                messages.append({"role": "user", "content": REMINDER})
             reply = self.llm.chat("agent", messages, TOOL_SCHEMAS, case.case_id, self.tb.end)
             messages.append(reply)
             if not reply.get("tool_calls"):
                 break
             for call in reply["tool_calls"]:
                 fn = call["function"]
-                args = (
-                    json.loads(fn["arguments"] or "{}")
-                    if isinstance(fn["arguments"], str)
-                    else fn["arguments"]
-                )
-                result = self.tb.call(fn["name"], args, (reply.get("content") or "").strip()[:200])
+                try:
+                    args = json.loads(fn["arguments"] or "{}") if isinstance(fn["arguments"], str) else fn["arguments"]
+                except ValueError:
+                    args = None
+                if fn["name"] not in TOOL_NAMES:  # small models invent tools; say so instead of running anything
+                    result = {"error": f"unknown tool '{fn['name']}'; use one of {sorted(TOOL_NAMES)}"}
+                elif not isinstance(args, dict):
+                    result = {"error": "the arguments must be one JSON object"}
+                else:
+                    result = self.tb.call(fn["name"], args, (reply.get("content") or "").strip()[:200])
                 messages.append(
                     {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, default=str)}
                 )

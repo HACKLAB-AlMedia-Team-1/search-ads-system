@@ -32,6 +32,8 @@ class Settings:
     duckdb_path: Path
     llm_api_key: str = field(default="", repr=False)
     linkup_api_key: str = field(default="", repr=False)
+    llm_extra_body: str = ""
+    devin_cli: str = "devin"
 
 
 def load_settings(env_file: Path = PROJECT_ROOT / ".env") -> Settings:
@@ -49,6 +51,8 @@ def load_settings(env_file: Path = PROJECT_ROOT / ".env") -> Settings:
         llm_model_fast=get("LLM_MODEL_FAST"),
         linkup_mode=os.environ.get("LINKUP_MODE", values.get("LINKUP_MODE") or "offline").strip(),
         linkup_api_key=get("LINKUP_API_KEY"),
+        llm_extra_body=get("LLM_EXTRA_BODY"),
+        devin_cli=get("DEVIN_CLI", "devin"),
         max_tool_calls=int(get("MAX_TOOL_CALLS", "12")),
         max_output_tokens_per_call=int(get("MAX_OUTPUT_TOKENS_PER_CALL", "1500")),
         sim_seed=int(get("SIM_SEED", "42")),
