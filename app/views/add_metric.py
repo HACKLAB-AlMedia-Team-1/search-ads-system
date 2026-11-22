@@ -6,23 +6,6 @@ import pandas as pd
 import streamlit as st
 from common import page
 
-EXAMPLES = {
-    "no_click_search_rate": (
-        "Share of searches without a click",
-        "(SUM(searches) - SUM(searches_with_click)) / NULLIF(SUM(searches), 0) FROM fact_hourly",
-    ),
-    "wasted_spend_share": (
-        "Share of ad spend on sessions whose search found nothing to click",
-        (
-            "SUM(spend_eur * idle) / NULLIF(SUM(spend_eur), 0) FROM (SELECT a.ts, a.market, a.campaign_id, a.spend_eur, "
-            "1 - f.clicked / NULLIF(f.searches, 0) AS idle FROM ads_hourly a JOIN (SELECT ts, market, "
-            "SUM(searches_with_click) AS clicked, SUM(searches) AS searches FROM fact_hourly WHERE source = 'paid' "
-            "GROUP BY ts, market) f ON a.ts = f.ts AND a.market = f.market) AS paid_idle"
-        ),
-    ),
-}
-BLANK = "Write my own"
-
 rt, palette = page()
 st.title("Add or edit a metric")
 add_tab, edit_tab = st.tabs(["Add a metric", "Edit a metric"])
@@ -72,12 +55,10 @@ with add_tab:
         "Give only a **name**, a **description** and the **SQL**. You do not say where it belongs: the system reads the SQL, proposes "
         "the links to existing metrics, checks each link against 7 days of history, and starts monitoring the metric at the next hour."
     )
-    example = st.segmented_control("Start from", [*EXAMPLES, BLANK], default=next(iter(EXAMPLES))) or BLANK
-    description, sql = EXAMPLES.get(example, ("", ""))
     with st.form("add_metric"):
-        name = st.text_input("Name (lowercase, underscores)", value="" if example == BLANK else example)
-        description = st.text_input("Description", value=description)
-        sql = st.text_area("SQL: an expression, then FROM a table", value=sql, height=150)
+        name = st.text_input("Name (lowercase, underscores)")
+        description = st.text_input("Description")
+        sql = st.text_area("SQL: an expression, then FROM a table", height=150)
         submitted = st.form_submit_button("Place it in the graph", type="primary")
     if submitted:
         with rt.lock:

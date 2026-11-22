@@ -19,8 +19,8 @@ GUIDE: dict[str, dict[str, str]] = {
         "German and the US store; now searches in the other language find nothing.",
         "shop": "Choose the country in the store (Deliver to), press Simulate it, then search in the other language "
         "(English in Germany, German in the US): no results. The local language still works.",
-        "metrics": "In that country only: about 1 in 5 shoppers search in the other language, so zero-result searches jump "
-        "and clicks and orders fall. Other countries stay normal.",
+        "metrics": "The zero-result rate updates after searches in the selected store. The received-orders total stays "
+        "flat after an empty search and resumes accumulating after a search finds products.",
         "agent": "Incident blaming `search-language[<country>] = local only`; rules out an indexing failure and a mobile release.",
         "where": "The country chosen in the store (Germany or the US)",
     },

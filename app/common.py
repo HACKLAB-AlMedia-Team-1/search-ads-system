@@ -7,6 +7,7 @@ import logging
 import shutil
 import sys
 import threading
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -19,25 +20,34 @@ import theme
 from shop_server import start_shop
 
 from rootsight.config import load_settings
+from rootsight.data.german import wrong_language
 from rootsight.logging_setup import setup_logging
 from rootsight.pipeline import Pipeline
 from rootsight.sim.clock import HOUR
-from rootsight.sim.faults import Scenario, load_scenarios
-from rootsight.sim.users import FOREIGN_SHARE
+from rootsight.sim.faults import Fault, Scenario, load_scenarios
 from rootsight.store.db import Database
 
 logger = logging.getLogger(__name__)
 
 BAND_SIGMAS = 3
 SHOP_PORT = 8600
-FIRST_HOUR_WAIT = 1.5
 SHOP_URL = f"http://localhost:{SHOP_PORT}"
-FOLLOWS_STORE = ("L1",)  # scenarios that break the country chosen in the store
 LANGUAGE_MARKETS = {"DE": "Germany", "US": "United States"}
 SPEEDS = {"Slow": 6.0, "Normal": 3.0, "Fast": 1.0}
 SIMULATE_SPEED = "Fast"
-FAILING_LANGUAGE = {"DE": "English", "US": "German"}  # L1: the language that finds nothing in each country
 AD_CAMPAIGN = {"AD1": "CMP-DE"}
+
+
+@dataclass
+class LanguageRun:
+    """Storefront observations and hourly orders for Step 1."""
+
+    market: str
+    counts: tuple[int, int] = (0, 0)
+    last_search_empty: bool = False
+    last_empty_hour: datetime | None = None
+    first_failure: datetime | None = None
+    orders: list[dict[str, datetime | float]] = field(default_factory=list)
 
 
 class Runtime:
@@ -54,12 +64,13 @@ class Runtime:
         self.seconds_per_hour = self.settings.seconds_per_sim_hour
         self.running = False
         self.started: dict[str, datetime] = {}
+        self._activations: dict[str, tuple[Scenario, Fault]] = {}
         self.shop_market = "DE"
-        self.broken_market: dict[str, str] = {}
+        self.shop_revision = 0
+        self.language_run: LanguageRun | None = None
+        self._ad_run_start: dict[str, tuple[datetime, float]] = {}
         self._thread: threading.Thread | None = None
-        self._queued = 0
         self._wake = threading.Event()
-        self._stepped = threading.Event()
         self._points: dict[tuple, dict | None] = {}
         self._latest: dict[tuple, dict | None] = {}
         self._wanted: set[tuple] = set()
@@ -76,20 +87,17 @@ class Runtime:
 
     @property
     def busy(self) -> bool:
-        """Is the simulation advancing right now (clock running, or queued hours still being worked through)?"""
+        """Is the simulation advancing right now?"""
         return self._thread is not None and self._thread.is_alive()
 
     def _work(self) -> None:
         """Background worker: queued hours run back to back; the running clock waits `seconds_per_hour` between hours."""
-        while self.running or self._queued > 0:
+        while self.running:
             with self.lock:
                 self.pipeline.step()
                 self._score_wanted()
-            self._stepped.set()
-            if self._queued > 0:
-                self._queued -= 1
-            else:
-                self._wake.wait(self.seconds_per_hour)
+                self._record_hourly_orders()
+            self._wake.wait(self.seconds_per_hour)
             self._wake.clear()
 
     def _ensure_worker(self) -> None:
@@ -98,13 +106,6 @@ class Runtime:
                 self._thread = threading.Thread(target=self._work, daemon=True)
                 self._thread.start()
 
-    def advance(self, hours: int) -> None:
-        """Advance by whole hours in the background, so the screen stays responsive and shows each hour as it passes."""
-        self._queued += hours
-        self._stepped.clear()
-        self._ensure_worker()
-        self._stepped.wait(FIRST_HOUR_WAIT)  # so the screen redraws with the first hour already done
-
     def start(self) -> None:
         """Run the simulation continuously in the background, one hour every `seconds_per_hour`."""
         self.running = True
@@ -112,67 +113,103 @@ class Runtime:
 
     def pause(self) -> None:
         """Stop the background simulation and wait for the hour in progress to finish."""
-        self.running, self._queued = False, 0
+        self.running = False
         self._wake.set()
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=60)
 
     def active(self) -> list[str]:
         """Ids of the scenarios whose fault is switched on right now."""
-        names, faults = set(self.pipeline.sim.faults.active_names(self.now)), self.pipeline.sim.faults
-        markets = {sid: self.broken_market.get(sid) or s.scope.get("market", "all") for sid, s in self.scenarios.items()}
-        return [sid for sid, s in self.scenarios.items() if s.fault in names
-                and faults.active(s.fault, self.now, None if markets[sid] == "all" else markets[sid])]  # fmt: skip
+        active = [sid for sid, (_, fault) in self._activations.copy().items() if fault.matches(self.now, None, None)]
+        if self.language_run is not None and "L1" not in active:
+            active.append("L1")
+        return active
 
     def journey_market(self) -> str:
-        """Country of the journey's first step: where L1 is broken, else the store's 'Deliver to' (US or DE)."""
-        if "L1" in self.active() and "L1" in self.broken_market:
-            return self.broken_market["L1"]
-        return self.shop_market if self.shop_market in LANGUAGE_MARKETS else "DE"
+        """Country of the first step, locked to Deliver to when the run starts."""
+        run = self.language_run
+        return run.market if run else self.shop_market
 
-    def inject(self, sid: str) -> None:
-        """Switch a scenario on, starting at the next simulated hour (L1 in the country chosen in the store)."""
-        with self.lock:
-            scenario = self.scenarios[sid]
-            if sid in FOLLOWS_STORE:
-                self.broken_market[sid] = self.journey_market()
-                scenario = scenario.for_market(self.broken_market[sid])
-            self.pipeline.sim.activate(scenario, at=self.now)
-            self.pipeline.sim.engine.cache.clear()  # no result cached before the change may be served after it
-            self.started[sid] = self.now
+    def _activate(self, scenario: Scenario) -> None:
+        scenario = scenario.shifted(self.now)
+        self._activations[scenario.id] = (scenario, self.pipeline.sim.activate(scenario))
+        self.pipeline.sim.engine.cache.clear()
+
+    def record_shop_search(self, market: str, query: str, empty: bool) -> None:
+        """Count a storefront search and start investigation on the first observed language failure."""
+        run = self.language_run
+        if run is None or run.market != market or not query:
+            return
+        if empty and wrong_language(query, market) and run.first_failure is None:
+            self._activate(replace(self.scenarios["L1"].for_market(market), end=None))
+            run.first_failure = self.now
+        searches, misses = run.counts
+        run.counts = (searches + 1, misses + int(empty))
+        run.last_search_empty = empty
+        if empty:
+            run.last_empty_hour = self.now
 
     def add_scenario(self, path: Path) -> None:
         """Make a newly saved scenario file available to Simulate."""
         self.scenarios.update(load_scenarios(path.parent, path.name))
 
-    def simulate(self, sid: str) -> None:
+    def simulate(self, sid: str) -> bool:
         """Switch a scenario on and run the clock fast (one simulated hour per second), so the agent works live."""
-        self.inject(sid)
+        with self.lock:
+            if sid in self.started:
+                return False
+            if sid == "L1":
+                if self.shop_market not in LANGUAGE_MARKETS:
+                    return False
+                self.language_run = LanguageRun(self.shop_market)
+            else:
+                scenario = self.scenarios[sid]
+                self._activate(scenario)
+                if sid in AD_CAMPAIGN:
+                    spent = self.pipeline.sim.pacer.spent(scenario.scope["market"], self.now.date())
+                    self._ad_run_start[sid] = (self.now, spent)
+            self.started[sid] = self.now
         self.seconds_per_hour = SPEEDS[SIMULATE_SPEED]
         self.start()
+        return True
 
     def fix(self, sid: str | None = None) -> None:
-        """End one running scenario (or all of them) at the next simulated hour."""
+        """End the selected simulation, keeping the clock and incident history."""
         with self.lock:
-            self.pipeline.sim.engine.cache.clear()
-            if sid is None:
-                self.pipeline.sim.stop_all(self.now)
-            else:
-                self.pipeline.sim.faults.stop(self.scenarios[sid].fault, self.now)
-                if self.scenarios[sid].calendar:
-                    self.db.execute(
-                        "UPDATE calendar SET end_ts = ? WHERE start_ts <= ? AND end_ts > ?",
-                        [self.now, self.now, self.now],
-                    )
+            if sid is not None and sid not in self.started:
+                return
+            ended = tuple(self.started) if sid is None else (sid,)
+            for scenario_id in ended:
+                if activation := self._activations.get(scenario_id):
+                    self.pipeline.sim.end_scenario(*activation, self.now)
+                    del self._activations[scenario_id]
+                if scenario_id == "L1":
+                    self.language_run = None
+                self._ad_run_start.pop(scenario_id, None)
+                self.started.pop(scenario_id, None)
+            if ended:
+                self.shop_revision += 1
+
+    def _investigation_start(self, sid: str) -> datetime | None:
+        if sid == "L1":
+            run = self.language_run
+            return run.first_failure if run else None
+        return self.started.get(sid)
 
     def finding(self, sid: str) -> dict | None:
         """The agent's report for a scenario started from the UI: the incident that blames the scenario's component."""
-        scenario, since = self.scenarios[sid], self.started.get(sid)
+        scenario, since = self.scenarios[sid], self._investigation_start(sid)
         if since is None or not scenario.event_log:
             return None
+        market = self.journey_market() if sid == "L1" else ""
+        detail = scenario.for_market(market).event_log[0]["detail"] if sid == "L1" else ""
         row = self.db.df(
-            "SELECT incident_id, status, report_json FROM incidents WHERE cause_component = ? AND last_seen >= ? ORDER BY incident_id DESC LIMIT 1",
-            [scenario.event_log[0]["component"], since - HOUR],
+            "SELECT incident_id, status, report_json FROM incidents WHERE cause_component = ? AND last_seen >= ? "
+            "AND (? <> 'L1' OR json_extract_string(segment_json, '$.market') = ? "
+            "OR (json_extract_string(segment_json, '$.market') IS NULL "
+            "AND contains(json_extract_string(report_json, '$.report.cause'), ?))) "
+            "ORDER BY last_seen DESC LIMIT 1",
+            [scenario.event_log[0]["component"], since, sid, market, detail],
         )
         if row.empty:
             return None
@@ -184,16 +221,17 @@ class Runtime:
 
     def progress(self, sid: str) -> list[str]:
         """What the agent is doing for a started scenario, newest stage last: watching, anomaly, investigation."""
-        since = self.started.get(sid)
+        since = self._investigation_start(sid)
         if since is None:
             return []
         hours = int((self.now - since) / HOUR)
         lines = [f"Hour {hours} since the fault started: the agent scores every metric each simulated hour."]
-        market = self.broken_market.get(sid) or self.scenarios[sid].scope.get("market", "all")
+        market = self.journey_market() if sid == "L1" else self.scenarios[sid].scope.get("market", "all")
         anomaly = self.db.df(
-            "SELECT ts, metric, segment_json, actual, expected, z FROM anomalies WHERE ts >= ? AND NOT planned "
-            "AND (? = 'all' OR segment_json LIKE ?) ORDER BY attention DESC LIMIT 1",
-            [since, market, f'%"{market}"%'],
+            "SELECT case_id, ts, metric, segment_json, actual, expected, z FROM anomalies "
+            "WHERE ts >= ? AND NOT planned AND (? = 'all' OR json_extract_string(segment_json, '$.market') = ?) "
+            "AND (? <> 'L1' OR metric = 'zero_result_rate') ORDER BY attention DESC LIMIT 1",
+            [since, market, market, sid],
         )
         if anomaly.empty:
             return [*lines, "No unusual numbers yet."]
@@ -202,51 +240,67 @@ class Runtime:
         name = self.pipeline.graph.metric(a["metric"]).description if a["metric"] in self.pipeline.graph.specs else a["metric"]
         lines.append(f"Anomaly at {a['ts']:%H:00}: {name} in {where} is {a['actual']:,.3g} against a normal "
                      f"{a['expected']:,.3g} ({a['z']:+.1f} standard deviations).")  # fmt: skip
-        case = self.db.df(
-            "SELECT case_id FROM cases WHERE kind = 'failure' AND ts >= ? ORDER BY ts DESC LIMIT 1", [since]
-        )
-        if case.empty:
-            return [*lines, "Waiting for the anomaly to repeat before opening a case."]
+        case_id = a["case_id"]
         steps = self.db.df(
-            "SELECT step, tool, reasoning FROM investigations WHERE case_id = ? ORDER BY step", [case["case_id"].iloc[0]]
+            "SELECT step, tool, reasoning FROM investigations WHERE case_id = ? ORDER BY step", [case_id]
         )
         if steps.empty:
-            return [*lines, f"Case {case['case_id'].iloc[0]} opened; the investigation is starting."]
+            return [*lines, f"Case {case_id} opened; the investigation is starting."]
         if (found := self.finding(sid)) is not None:
             done = f"{len(steps)} checks; finding confirmed as incident #{found['incident_id']} (see below)"
-            return [*lines, f"Case {case['case_id'].iloc[0]} investigated with {done}."]
+            return [*lines, f"Case {case_id} investigated with {done}."]
         last = steps.iloc[-1]
         latest = f"'{last['tool']}' ({last['reasoning'] or 'gathering evidence'})"
-        return [*lines, f"Investigating case {case['case_id'].iloc[0]}: {len(steps)} checks so far, latest {latest}."]
+        return [*lines, f"Investigating case {case_id}: {len(steps)} checks so far, latest {latest}."]
 
-    def orders_chart(self, sid: str) -> pd.DataFrame:
-        """L1 since Simulate, per closed hour: cumulative expected and received orders from searches in the failing language."""
-        since, market = self.started.get(sid), self.broken_market.get(sid, self.journey_market())
-        rows, expected, received = [], 0.0, 0.0
-        if since is None:
-            return pd.DataFrame(rows)
-        faults, fault = self.pipeline.sim.faults, self.scenarios[sid].fault
-        for k in range(int((self.now - since) / HOUR)):
-            hour = since + HOUR * k
-            p = self._known("orders", {"market": market}, hour)
-            if p is None:
-                continue
-            share = FOREIGN_SHARE * p["expected"]
-            expected += share
-            received += 0.0 if faults.active(fault, hour, market) else share  # blocked searches show nothing to buy
-            rows.append({"ts": hour + HOUR, "expected": expected, "received": received})
-        return pd.DataFrame(rows)
+    def _record_hourly_orders(self) -> None:
+        run = self.language_run
+        if run is None or not run.counts[0]:
+            return
+        hour, segment = self.now - HOUR, (("market", run.market),)
+        key = ("orders", segment, hour)
+        if key not in self._points:
+            self._points[key] = self.pipeline.watcher.score_hour("orders", dict(segment), hour)
+        if point := self._points[key]:
+            if not run.orders:
+                run.orders.append({"ts": hour, "expected": 0.0, "received": 0.0})
+            blocked = run.last_search_empty or run.last_empty_hour == hour
+            run.orders.append({
+                "ts": self.now, "expected": point["expected"],
+                "received": 0.0 if blocked else point["actual"],
+            })
 
     def ads_chart(self, sid: str) -> pd.DataFrame:
-        """AD1 for the simulated day: cumulative actual and planned spend of the campaign, and its fixed daily budget."""
-        day = (self.now - HOUR).replace(hour=0)
+        """Cumulative spend from this run, with a fresh daily budget at midnight."""
+        now = self.now
+        run_start = self._ad_run_start.get(sid)
+        if run_start is None:
+            return pd.DataFrame()
+        since, opening_spend = run_start
+        start = max(since, (now - HOUR).replace(hour=0))
+        prior_spend = opening_spend if start == since else 0.0
         frame = self.db.df(
             "SELECT ts, budget_daily_eur, planned_spend_eur, spend_eur FROM ads_hourly WHERE campaign_id = ? "
             "AND ts >= ? AND ts < ? ORDER BY ts",
-            [AD_CAMPAIGN[sid], day, self.now],
+            [AD_CAMPAIGN[sid], start, now],
         )
-        return frame.assign(ts=frame["ts"] + HOUR, spend=frame["spend_eur"].cumsum(),
-                            planned=frame["planned_spend_eur"].cumsum())  # fmt: skip
+        available = (frame["budget_daily_eur"] - prior_spend).clip(lower=0).round(2)
+        market = self.scenarios[sid].scope["market"]
+        sim = self.pipeline.sim
+        opening_budget = (
+            max(sim.pacer.budget(market, start, sim.faults) - prior_spend, 0.0)
+            if available.empty else available.iloc[0]
+        )
+        origin = pd.DataFrame([{"ts": start, "budget": round(opening_budget, 2), "spend": 0.0, "planned": 0.0}])
+        if frame.empty:
+            return origin
+        run = frame.assign(
+            ts=frame["ts"] + HOUR,
+            budget=available,
+            spend=frame["spend_eur"].cumsum().round(2),
+            planned=frame["planned_spend_eur"].cumsum().round(2).clip(upper=available),
+        )
+        return pd.concat([origin, run[origin.columns]], ignore_index=True)
 
     def notices(self, sid: str) -> list[str]:
         """Info cards (planned event, data delay) raised since an innocent scenario was started."""
@@ -360,8 +414,8 @@ def reset_demo() -> None:
 
 
 def controls(rt: Runtime, key: str) -> None:
-    """Time controls: start/pause the simulated clock, jump ahead, choose the speed."""
-    run, one, six, speed = st.columns([1.3, 1, 1, 2.2], vertical_alignment="bottom")
+    """Start or pause the simulated clock and choose the speed."""
+    run, speed = st.columns([1.3, 4.2], vertical_alignment="bottom")
     label = "⏸ Pause" if rt.running else "▶ Start the clock"
     run.button(
         label,
@@ -369,12 +423,6 @@ def controls(rt: Runtime, key: str) -> None:
         type="primary",
         width="stretch",
         on_click=rt.pause if rt.running else rt.start,
-    )
-    one.button(
-        "+1 hour", key=f"{key}_1", width="stretch", on_click=rt.advance, args=(1,), disabled=rt.running
-    )
-    six.button(
-        "+6 hours", key=f"{key}_6", width="stretch", on_click=rt.advance, args=(6,), disabled=rt.running
     )
     current = min(SPEEDS, key=lambda name: abs(SPEEDS[name] - rt.seconds_per_hour))
     choice = speed.segmented_control(
@@ -393,8 +441,8 @@ def _status(rt: Runtime) -> None:
         f'<br><span class="muted">Active faults</span>{faults}</div>',
         unsafe_allow_html=True,
     )
-    if active:
-        st.button("Fix all faults", key="side_fix", width="stretch", on_click=rt.fix)
+    if rt.started:
+        st.button("End all simulations", key="side_fix", width="stretch", on_click=rt.fix)
 
 
 def page() -> tuple[Runtime, dict[str, str]]:

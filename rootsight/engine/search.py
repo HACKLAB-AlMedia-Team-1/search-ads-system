@@ -120,9 +120,14 @@ class SearchEngine:
         filters: SearchFilters,
         sim_time: datetime,
         limit: int = 10,
+        *,
+        local_language_only: bool = False,
     ) -> SearchResult:
         """Run one search (or serve it from the cache) and return the top `limit` results."""
-        key = (market, platform, query, filters, limit)
+        blocked = (
+            local_language_only or self.faults.active(fault_names.FOREIGN_LANGUAGE_BLOCKED, sim_time, market)
+        ) and wrong_language(query, market)
+        key = (market, platform, query, filters, limit, blocked)
         stale = self.faults.active(fault_names.CACHE_STALE, sim_time, market)
         hit = self.cache.get(key, sim_time, STALE_TTL_MIN if stale else NORMAL_TTL_MIN)
         if hit:
@@ -137,14 +142,13 @@ class SearchEngine:
             if self.faults.active(fault_names.REGIONAL_ANALYZER_ENGLISH, sim_time, market)
             else index.lang
         )
-        blocked = self.faults.active(
-            fault_names.FOREIGN_LANGUAGE_BLOCKED, sim_time, market
-        ) and wrong_language(query, market)
         text = understand_german(query) if market == "US" else query
         tokens = [] if blocked else analyze(text, lang)
         visible = self._visible(market, sim_time) & self._filter_mask(market, platform, filters, sim_time)
         bm25 = index.scores(tokens)
-        idx, scores = ranker.rank(index, bm25, visible, self._mode(market, sim_time), query, limit)
+        idx, scores = ((), ()) if blocked else ranker.rank(
+            index, bm25, visible, self._mode(market, sim_time), query, limit
+        )
         result = SearchResult(
             query=query,
             market=market,

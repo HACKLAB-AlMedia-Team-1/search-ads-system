@@ -61,14 +61,13 @@ Open the dashboard. You are on the **Shopper journey** page.
 1. Under the KPI tiles, pick **Step 1**, **Step 2**, **Step 3** or **All steps** in *Demo step*.
 2. In **Step 1 - Foreign-language searches fail**, press **Simulate it**. The fault starts in the country the store "Deliver to" is set to
    (Germany: English searches fail; US: German searches fail), and the clock starts at one simulated hour per second (*Fast*).
-3. The step's chart appears: cumulative expected orders from searches in the failing language against the orders received (flat while it is broken).
-4. *What the agent found (live)* updates every second: hours since the fault, the anomaly it saw, the case it opened, the checks so far.
+3. Press **See it in the store** or submit a search in ShopLens. The zero-result tile shows the share of shop searches in the selected country that found nothing. The chart starts with the first search and totals each closed hour's expected and received orders. The received total stays flat after an empty search and resumes when a search finds products.
+4. After the first failed foreign-language search, *What the agent found (live)* shows the anomaly, the case and the checks as they happen.
    When the agent is sure, the finding replaces it: a plain-language summary, the cause, where, since when, the cost, the **Failed check**
    (SQL, tables, expected vs. received value, why it failed), the **Possible next action**, the evidence checklist, the ruled-out causes,
    and *How the agent investigated* with the SQL each step ran.
-5. Press **See it in the store** to look as a shopper. Press **Fix it** and let about 4 simulated hours pass so the incident closes.
-6. Repeat with **Step 2** (chart: cumulative ad spend vs. planned spend vs. the fixed €250 budget) and **Step 3** (top sellers out of stock).
-   You can still use **Start the clock**, **+1 hour** / **+6 hours** and the speed choice at any time.
+5. Press **End simulation** to restore the store and clear the step. The clock keeps running and the report stays on **Incidents**.
+6. Repeat with **Step 2** (ad spend starts at €0 on the chart and builds against the budget available for that run) and **Step 3** (out-of-stock products with a Bestseller badge).
 
 What you should see:
 
@@ -80,9 +79,9 @@ What you should see:
 
 Tips:
 
-- Step 2 is easiest to see if you simulate it shortly after midnight (simulated time is in the sidebar) and then press **+6 hours** twice. The budget is gone by about 10:00.
+- Start Step 2 shortly after simulated midnight and let the clock run. The budget is usually gone by about 10:00.
 - Leave a few simulated hours between steps. If two failures overlap, the reports are less clear.
-- The sidebar always shows the simulated time and which faults are active. **Fix all faults** ends everything.
+- The sidebar shows the simulated time and active faults. **End all simulations** ends every running scenario.
 - **Reset demo** (sidebar) removes all incidents and goes back to the clean 14 days.
 
 ---
@@ -91,11 +90,11 @@ Tips:
 
 | Page | What to do there |
 |---|---|
-| **All scenarios** | Every scenario explained in plain words, with a Simulate it / Fix it button. The second tab has the two innocent changes (planned campaign, late data) that must NOT create an incident; the third tab, *Your scenarios*, has the ones you wrote. |
+| **All scenarios** | Each scenario has **Simulate it** and **End simulation** controls. The second tab has the planned campaign and late-data scenarios. The third tab, *Your scenarios*, has the ones you wrote. |
 | **Control room** | The key numbers against what is expected (green / amber / red), a chart with the expected range, alerts and the latest finding. Filter by country. |
 | **Incidents** | One row per problem. Pick one to read the full report or download it. |
 | **Metric graph** | Pick a metric to see what feeds into it. Red = unusual right now. |
-| **Add or edit a metric** | *Add a metric*: pick an example, press **Place it in the graph**. The system proposes the links and checks them on history; weak links are marked "Needs a human look". *Edit a metric*: pick any metric (built-in too), change its description or SQL, press **Save the change**. The SQL is run on 7 days of history, the metric's links are re-checked, and the change is written to `rootsight/graph/metrics.yaml` (built-in) or `data/metrics_custom.yaml` (added). |
+| **Add or edit a metric** | In *Add a metric*, enter a name, description and SQL, then press **Place it in the graph**. The system checks proposed links on history and marks weak links "Needs a human look". In *Edit a metric*, pick a metric, change its description or SQL, and press **Save the change**. RootSight checks the SQL and links on 7 days of history before saving. |
 | **Add a scenario** | Write the title, an id, what breaks, where, and what a shopper sees; press **Let the agent check it**. The agent picks the matching failure the simulator can produce and writes what the numbers will do and what the agent should do. **Save the scenario** writes `scenarios/<ID>.yaml`; it appears on *All scenarios → Your scenarios*. If no simulator failure matches (or the country/device is not possible), you get the reason instead. |
 
 In the store you can also switch the country (top left), the device (Web / Android app / iOS app) and light/dark mode (moon button).

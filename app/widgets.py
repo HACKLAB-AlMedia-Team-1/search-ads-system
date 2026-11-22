@@ -5,11 +5,11 @@ from __future__ import annotations
 import html
 from urllib.parse import urlencode
 
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from common import (
     AD_CAMPAIGN,
-    FAILING_LANGUAGE,
     LANGUAGE_MARKETS,
     SHOP_URL,
     SIMULATE_SPEED,
@@ -45,10 +45,26 @@ def status(rt: Runtime, metric: str, z: float) -> str:
     return "bad" if harm >= 3 else "warn" if harm >= 2 else "good"
 
 
-def kpi_grid(rt: Runtime, metrics: list[tuple[str, str]], segment: dict | None = None) -> None:
+def kpi_grid(
+    rt: Runtime,
+    metrics: list[tuple[str, str]],
+    segment: dict | None = None,
+    *,
+    shop_searches: tuple[int, int] | None = None,
+) -> None:
     """A responsive row of KPI tiles: value, expected value and the difference, coloured by status."""
     tiles = []
     for label, metric in metrics:
+        if metric == "zero_result_rate" and shop_searches is not None:
+            searches, misses = shop_searches
+            value = f"{misses / searches:.1%}" if searches else "–"
+            detail = f"{misses:,} of {searches:,} shop searches" if searches else "Waiting for a shop search"
+            severity = "bad" if misses else "good" if searches else ""
+            tiles.append(
+                f'<div class="tile {severity}"><div class="label">{label}</div>'
+                f'<div class="value">{value}</div><div class="sub">{detail}</div></div>'
+            )
+            continue
         p = rt.point(metric, segment or {}, last_hour(rt))
         if p is None:
             tiles.append(
@@ -163,7 +179,8 @@ def shop_link(rt: Runtime, sid: str) -> str | None:
     """URL that opens the store exactly where a scenario can be seen (country, device, search text)."""
     if sid == "L1":
         market = rt.journey_market()
-        return f"{SHOP_URL}/?{urlencode({'market': market, 'device': 'web', 'q': FOREIGN_QUERY[market]})}"
+        query = FOREIGN_QUERY.get(market, "")
+        return f"{SHOP_URL}/?{urlencode({'market': market, 'device': 'web', 'q': query})}"
     if sid not in SHOP_VIEW:
         return None
     market, device, query = SHOP_VIEW[sid]
@@ -172,9 +189,9 @@ def shop_link(rt: Runtime, sid: str) -> str | None:
 
 def simulate(rt: Runtime, sid: str) -> None:
     """Button callback: start the scenario and show the fast clock speed on every page's speed control."""
-    rt.simulate(sid)
-    for page in ("journey", "scenarios"):
-        st.session_state[f"{page}_speed"] = SIMULATE_SPEED
+    if rt.simulate(sid):
+        for page in ("journey", "scenarios", "room"):
+            st.session_state[f"{page}_speed"] = SIMULATE_SPEED
 
 
 def _chart_layout(palette: dict) -> dict:
@@ -186,17 +203,19 @@ def step_chart(rt: Runtime, sid: str, palette: dict) -> None:
     """The chart of a simulated step: L1 cumulative orders (expected vs received), AD1 cumulative spend vs budget."""
     fig = go.Figure(layout=_chart_layout(palette))
     if sid == "L1":
-        frame = rt.orders_chart(sid)
-        market = rt.broken_market.get(sid, rt.journey_market())
-        st.caption(f"Orders from {FAILING_LANGUAGE[market]} searches in {LANGUAGE_MARKETS[market]} since you pressed Simulate (cumulative)")
-        if not frame.empty:
-            fig.add_trace(go.Scatter(x=frame["ts"], y=frame["expected"], line={"dash": "dot", "color": "#8b93a1", "width": 2}, name="expected orders"))
-            fig.add_trace(go.Scatter(x=frame["ts"], y=frame["received"], line={"color": "#e47911", "width": 3}, name="received orders"))
+        run = rt.language_run
+        if run is None or not run.orders:
+            return
+        frame = pd.DataFrame(run.orders.copy())
+        st.caption(f"Cumulative orders in {LANGUAGE_MARKETS[run.market]} since the first shop search")
+        fig.add_trace(go.Scatter(x=frame["ts"], y=frame["expected"].cumsum(), line={"dash": "dot", "color": "#8b93a1", "width": 2}, name="Total expected orders"))
+        fig.add_trace(go.Scatter(x=frame["ts"], y=frame["received"].cumsum(), line={"color": "#e47911", "width": 3}, name="Total received orders"))
+        fig.update_yaxes(title_text="Orders")
     elif sid in AD_CAMPAIGN:
         frame = rt.ads_chart(sid)
-        st.caption(f"Ad spend of {AD_CAMPAIGN[sid]} today (cumulative) against its fixed daily budget")
+        st.caption(f"{AD_CAMPAIGN[sid]} spend from this run against the available daily budget")
         if not frame.empty:
-            fig.add_trace(go.Scatter(x=frame["ts"], y=frame["budget_daily_eur"], line={"color": palette["bad"], "width": 1.5}, name="budget"))
+            fig.add_trace(go.Scatter(x=frame["ts"], y=frame["budget"], line={"color": palette["bad"], "width": 1.5}, name="available budget"))
             fig.add_trace(go.Scatter(x=frame["ts"], y=frame["planned"], line={"dash": "dot", "color": "#8b93a1", "width": 2}, name="expected spend"))
             fig.add_trace(go.Scatter(x=frame["ts"], y=frame["spend"], line={"color": "#e47911", "width": 3}, name="actual spend"))
             fig.update_yaxes(tickprefix="€")
@@ -216,27 +235,33 @@ def live_status(rt: Runtime, sid: str) -> None:
 
 
 def scenario_card(rt: Runtime, sid: str, step: int | None = None, palette: dict | None = None) -> None:
-    """One scenario: what it is, how to see it, Simulate / Fix buttons and what the agent found."""
+    """One scenario with its controls, shopper link and investigation."""
     info, active, finding = GUIDE[sid], sid in rt.active(), rt.finding(sid)
+    run = rt.language_run
+    waiting = sid == "L1" and run is not None and run.first_failure is None
     notices = rt.notices(sid) if not rt.scenarios[sid].event_log or rt.scenarios[sid].calendar else []
     with st.container(border=True):
         head, action = st.columns([4, 1.4], vertical_alignment="center")
         prefix = f"Step {step} · " if step else f"{sid} · "
-        badge = ('<span class="badge bad">broken now</span>' if active else
+        badge = ('<span class="badge bad">broken now</span>' if active and not waiting else
                  '<span class="badge good">agent found it</span>' if finding else "")  # fmt: skip
         head.markdown(f"#### {prefix}{info['title']} {badge}", unsafe_allow_html=True)
-        if active:
-            action.button("Fix it", key=f"fix_{sid}_{step}", width="stretch", on_click=rt.fix, args=(sid,))
+        if sid in rt.started:
+            action.button("End simulation", key=f"fix_{sid}_{step}", width="stretch", on_click=rt.fix, args=(sid,))
         else:
+            unavailable = sid == "L1" and rt.journey_market() not in LANGUAGE_MARKETS
             if action.button(
                 "Simulate it",
                 key=f"go_{sid}_{step}",
                 type="primary",
                 width="stretch",
+                disabled=unavailable,
                 on_click=simulate,
                 args=(rt, sid),
             ):
                 st.rerun(scope="app")  # the button sits in a live fragment; redraw the clock controls too
+            if unavailable:
+                st.info("Choose Germany or the United States under Deliver to in ShopLens to run this step.")
         st.markdown(
             f'<div class="kv"><i>What breaks</i><span>{info["what"]}</span><i>Where</i><span>{info["where"]}</span>'
             f"<i>What a shopper sees</i><span>{info['shop']}</span><i>What the numbers do</i><span>{info['metrics']}</span>"
@@ -258,4 +283,7 @@ def scenario_card(rt: Runtime, sid: str, step: int | None = None, palette: dict 
             )
         elif active:
             st.divider()
-            live_status(rt, sid)
+            if waiting:
+                st.caption("Waiting for a foreign-language search to fail in ShopLens.")
+            else:
+                live_status(rt, sid)

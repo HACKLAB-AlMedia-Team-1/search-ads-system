@@ -55,6 +55,7 @@ class Shop:
             (r.market, r.product_id): (text(r.title), text(r.brand), text(r.bullet_point)[:400])
             for r in frame.itertuples(index=False)
         }
+        self.best_sellers = {market: set(docs) for market, docs in rt.pipeline.sim.top_products.items()}
 
     def _items(self, market: str, result: SearchResult) -> list[dict]:
         cat = self.rt.pipeline.sim.engine.catalogues[market]
@@ -69,41 +70,39 @@ class Shop:
                 "id": pid, "doc": doc, "rank": rank, "title": title, "brand": brand, "bullet": bullet, "price": round(price, 2),
                 "stock": 0 if cat.delisted[doc] else int(cat.stock[doc]), "rating": round(3.3 + (h % 17) / 10, 1),
                 "reviews": int(10 ** (1 + ((h >> 8) % 300) / 100)), "fast": h % 3 == 0,
+                "best_seller": doc in self.best_sellers[market],
                 "emoji": next((e for word, e in EMOJI.items() if word in lowered), "📦"),
             })  # fmt: skip
         return items
 
     def _campaign(self, market: str) -> dict:
         """Is the market's ad campaign still delivering today (budget left)?"""
-        now = self.rt.now
-        day = now.replace(hour=0, minute=0)
-        row = self.rt.db.df(
-            "SELECT sum(spend_eur) AS spent, max(budget_daily_eur) AS budget FROM ads_hourly WHERE market = ? AND ts >= ? AND ts < ?",
-            [market, day, now],
-        ).iloc[0]
-        budget = CAMPAIGNS[market][1] if pd.isna(row["budget"]) else float(row["budget"])
-        spent = 0.0 if pd.isna(row["spent"]) else float(row["spent"])
+        sim, now = self.rt.pipeline.sim, self.rt.now
+        budget = sim.pacer.budget(market, now, sim.faults)
+        spent = sim.pacer.spent(market, now.date())
         return {"spent": round(spent, 2), "budget": budget, "active": spent < BUDGET_SPENT * budget}
 
     def _search(
         self, query: str, market: str, platform: str, filters: SearchFilters, limit: int
     ) -> SearchResult:
-        with self.rt.lock:
-            return self.rt.pipeline.sim.engine.search(
-                query, market, platform, filters, self.rt.now, limit=limit
-            )
+        run = self.rt.language_run
+        return self.rt.pipeline.sim.engine.search(
+            query, market, platform, filters, self.rt.now, limit=limit,
+            local_language_only=run is not None and run.market == market,
+        )
 
     def home(self, market: str) -> dict:
         """Popular searches and two product rows for the landing page."""
-        popular = self.rt.pipeline.sim.funnel.pool.popular(market, 8)
-        rows = [
-            {
-                "query": q,
-                "items": self._items(market, self._search(q, market, "web", SearchFilters(), HOME_ROW)),
-            }
-            for q in popular[:2]
-        ]
-        return {"popular": popular, "rows": rows}
+        with self.rt.lock:
+            popular = self.rt.pipeline.sim.funnel.pool.popular(market, 8)
+            rows = [
+                {
+                    "query": q,
+                    "items": self._items(market, self._search(q, market, "web", SearchFilters(), HOME_ROW)),
+                }
+                for q in popular[:2]
+            ]
+            return {"popular": popular, "rows": rows, "revision": self.rt.shop_revision}
 
     def search(self, params: dict[str, str]) -> dict:
         """Search results plus the sponsored slot and plain-language notes about anything unusual."""
@@ -112,19 +111,27 @@ class Shop:
         filters = SearchFilters(
             in_stock=params.get("in_stock") == "1" or None, min_price=low or None, max_price=high or None
         )
-        result = self._search(query, market, platform, filters, FETCH)
-        items = self._items(market, result)
-        campaign = self._campaign(market)
-        self.rt.log_ux(
-            "search", market, platform, query, value=result.latency_ms, session=params.get("sid", "")
-        )
+        with self.rt.lock:
+            revision = self.rt.shop_revision
+            result = self._search(query, market, platform, filters, FETCH)
+            items = self._items(market, result)
+            campaign = self._campaign(market)
+            run = self.rt.language_run
+            language_failure = wrong_language(query, market) and (
+                (run is not None and run.market == market)
+                or self.rt.pipeline.sim.faults.active(FOREIGN_LANGUAGE_BLOCKED, self.rt.now, market)
+            )
+            if query and params.get("observe") != "0":
+                session = params.get("sid", "")
+                self.rt.log_ux("search", market, platform, query, value=result.latency_ms, session=session)
+                if result.zero_result:
+                    self.rt.log_ux("zero_result", market, platform, query, session=session)
+                self.rt.record_shop_search(market, query, result.zero_result)
         notes = []
         if result.zero_result:
-            self.rt.log_ux("zero_result", market, platform, query, session=params.get("sid", ""))
             notes.append(
                 f"The {market} store accepts only its own language right now, so this search returned nothing."
-                if self.rt.pipeline.sim.faults.active(FOREIGN_LANGUAGE_BLOCKED, self.rt.now, market)
-                and wrong_language(query, market)
+                if language_failure
                 else "This search returned nothing."
             )
         if not campaign["active"]:
@@ -138,7 +145,7 @@ class Shop:
             notes.append(f"These results come from a cache and are {result.result_age_min:.0f} minutes old.")
         sponsored = items[0] if campaign["active"] and items else None  # shown even when sold out; its Add button is then disabled
         return {"query": query, "total": result.total_matches, "latency_ms": round(result.latency_ms), "items": items,
-                "sponsored": sponsored, "notes": notes}  # fmt: skip
+                "sponsored": sponsored, "notes": notes, "revision": revision}  # fmt: skip
 
     def add_to_cart(self, body: dict) -> dict:
         """Check live stock and price when a shopper adds a product to the cart."""
@@ -197,13 +204,16 @@ class Handler(BaseHTTPRequestHandler):
         params = {k: v[0] for k, v in parse_qs(url.query).items()}
         params["market"] = params.get("market") if params.get("market") in CAMPAIGNS else "US"
         params["device"] = params.get("device") if params.get("device") in PLATFORMS else "web"
-        if url.path in ("/api/home", "/api/search"):
-            self.shop.rt.shop_market = params["market"]  # the journey page follows the store's "Deliver to"
         try:
-            if url.path == "/api/home":
-                self._json(self.shop.home(params["market"]))
-            elif url.path == "/api/search":
-                self._json(self.shop.search({"q": "", **params}))
+            if url.path == "/api/state":
+                self._json({"revision": self.shop.rt.shop_revision})
+            elif url.path in ("/api/home", "/api/search"):
+                with self.shop.rt.lock:
+                    if params.get("refresh") != "1":
+                        self.shop.rt.shop_market = params["market"]
+                    payload = (self.shop.home(params["market"]) if url.path == "/api/home"
+                               else self.shop.search({"q": "", **params}))
+                self._json(payload)
             else:
                 file = STATIC / ("index.html" if url.path == "/" else url.path.lstrip("/"))
                 if file.suffix in TYPES and file.is_file() and file.parent == STATIC:
@@ -220,9 +230,13 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("market") not in CAMPAIGNS:
                 self._json({"error": "unknown market"}, 400)
             elif self.path == "/api/cart":
-                self._json(self.shop.add_to_cart(body))
+                with self.shop.rt.lock:
+                    payload = self.shop.add_to_cart(body)
+                self._json(payload)
             elif self.path == "/api/checkout":
-                self._json(self.shop.checkout(body))
+                with self.shop.rt.lock:
+                    payload = self.shop.checkout(body)
+                self._json(payload)
             elif self.path == "/api/event":
                 device = body.get("device") if body.get("device") in PLATFORMS else "web"
                 self.shop.rt.log_ux(

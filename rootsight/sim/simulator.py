@@ -15,7 +15,7 @@ from rootsight.sim import arrivals, events
 from rootsight.sim import faults as fault_names
 from rootsight.sim.ads import CAMPAIGNS, AdPacer
 from rootsight.sim.clock import HOUR, hours
-from rootsight.sim.faults import FaultRegistry, Scenario
+from rootsight.sim.faults import Fault, FaultRegistry, Scenario
 from rootsight.sim.funnel import Funnel
 from rootsight.sim.traffic import Traffic, split_platforms
 from rootsight.sim.users import QueryPool
@@ -59,13 +59,33 @@ class Simulator:
         engine = SearchEngine(products, FaultRegistry(), settings.sim_seed, settings.data_processed_dir)
         return cls(db, engine, QueryPool(queries, labels), Traffic(profile), settings.sim_seed)
 
-    def activate(self, scenario: Scenario, at: datetime | None = None) -> None:
+    def activate(self, scenario: Scenario, at: datetime | None = None) -> Fault:
         """Turn a scenario on (optionally moved to start at `at`) and write its event-log and calendar rows."""
         scenario = scenario.shifted(at) if at else scenario
-        self.faults.add(scenario.to_fault())
+        fault = scenario.to_fault()
         self.db.insert_df("events", pd.DataFrame(events.scenario_event_rows(scenario)))
         self.db.insert_df("calendar", pd.DataFrame(events.calendar_rows(scenario)))
+        self.faults.add(fault)
         logger.info("Scenario %s active from %s", scenario.id, scenario.start)
+        return fault
+
+    def end_scenario(self, scenario: Scenario, fault: Fault, at: datetime) -> None:
+        """End this activation and restore its live storefront state."""
+        self.faults.stop_fault(fault, at)
+        for entry in events.calendar_rows(scenario):
+            self.db.execute(
+                "UPDATE calendar SET end_ts = greatest(start_ts, ?) WHERE start_ts = ? AND end_ts = ? "
+                "AND name = ? AND kind = ? AND scope_json = ?",
+                [at, entry["start_ts"], entry["end_ts"], entry["name"], entry["kind"], entry["scope_json"]],
+            )
+        for market in self.top_products:
+            if not fault.matches(fault.start, market, None) or self.faults.active(fault.name, at, market):
+                continue
+            if fault.name == fault_names.SUPPLIER_DELIVERY_LATE:
+                self._receive_late_supply(at, market)
+            elif fault.name == fault_names.AD_PACING_RUNAWAY:
+                self.pacer.recover(market, at.date())
+        self.engine.cache.clear()
 
     def stop_all(self, at: datetime) -> None:
         """End every running fault at `at`."""
@@ -156,14 +176,18 @@ class Simulator:
                     self._purchase_order(ts, market, received=False)
                 cat.stock[top] = 0
             elif market in self._late_supply:
-                self._late_supply.discard(market)
-                cat.stock[top] = UNITS_ORDERED
-                self.db.execute(
-                    "UPDATE purchase_orders SET qty_received = qty_ordered, received_at = ? WHERE market = ? AND received_at IS NULL",
-                    [ts, market],
-                )
+                self._receive_late_supply(ts, market)
             elif ts.hour == NIGHTLY_HOUR:
                 self._purchase_order(ts, market, received=True)
+
+    def _receive_late_supply(self, ts: datetime, market: str) -> None:
+        if market in self._late_supply:
+            self._late_supply.remove(market)
+            self.engine.catalogues[market].stock[self.top_products[market]] = UNITS_ORDERED
+            self.db.execute(
+                "UPDATE purchase_orders SET qty_received = qty_ordered, received_at = ? WHERE market = ? AND received_at IS NULL",
+                [ts, market],
+            )
 
     def _components(self, ts: datetime) -> list[dict]:
         mid = ts + timedelta(minutes=30)
@@ -224,6 +248,11 @@ class Simulator:
 
     def load_state(self, next_tick: datetime) -> bool:
         """Restore the saved catalogue state and today's ad spend; False if nothing was saved."""
+        today = self.db.df(
+            "SELECT campaign_id, sum(spend_eur) AS spend FROM ads_hourly WHERE CAST(ts AS DATE) = ? GROUP BY 1",
+            [next_tick.date()],
+        )
+        self.pacer.restore(today, next_tick.date())
         state = self.db.df("SELECT * FROM catalogue_state")
         if state.empty:
             return False
@@ -233,9 +262,4 @@ class Simulator:
             cat.price[:], cat.stock[:], cat.delisted[:] = (
                 ordered["price_eur"].to_numpy(), ordered["stock"].to_numpy(), ordered["delisted"].to_numpy(),
             )  # fmt: skip
-        today = self.db.df(
-            "SELECT campaign_id, sum(spend_eur) AS spend FROM ads_hourly WHERE CAST(ts AS DATE) = ? GROUP BY 1",
-            [next_tick.date()],
-        )
-        self.pacer.restore(today, next_tick.date())
         return True

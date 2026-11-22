@@ -58,6 +58,11 @@ class FaultRegistry:
             for f in self._faults
         ]
 
+    def stop_fault(self, fault: Fault, at: datetime) -> None:
+        """End the selected activation without affecting others that use the same switch."""
+        if fault.matches(at, None, None):
+            self._faults = [replace(f, end=at) if f is fault else f for f in self._faults]
+
     def clear(self) -> None:
         """Remove all faults."""
         self._faults.clear()

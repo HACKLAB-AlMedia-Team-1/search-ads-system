@@ -31,6 +31,21 @@ class AdPacer:
 
     def __init__(self) -> None:
         self._spent: dict[tuple[str, date], float] = {}
+        self._normal_spend: dict[str, tuple[date, float]] = {}
+
+    def spent(self, market: str, day: date) -> float:
+        """Campaign spend charged against the current day's available budget."""
+        return self._spent.get((CAMPAIGNS[market][0], day), 0.0)
+
+    def recover(self, market: str, day: date) -> None:
+        """Return to the budget position the normal pacing schedule would have reached."""
+        normal = self._normal_spend.pop(market, None)
+        if normal and normal[0] == day:
+            self._spent[(CAMPAIGNS[market][0], day)] = normal[1]
+
+    def budget(self, market: str, ts: datetime, faults: FaultRegistry) -> float:
+        """Daily campaign budget including any active planned push."""
+        return CAMPAIGNS[market][1] * (PUSH_BUDGET_FACTOR if faults.active(fault_names.CAMPAIGN_PUSH, ts, market) else 1.0)
 
     def restore(self, ads_today: pd.DataFrame, day: date) -> None:
         """Re-load today's spend per campaign (used when the simulation resumes mid-day)."""
@@ -41,20 +56,27 @@ class AdPacer:
         self, ts: datetime, market: str, weight: float, faults: FaultRegistry, rng: np.random.Generator
     ) -> dict:
         """Spend, clicks and paid sessions of the market's campaign in the hour starting at `ts`."""
-        campaign, base_budget = CAMPAIGNS[market]
-        push = faults.active(fault_names.CAMPAIGN_PUSH, ts, market)
-        budget = base_budget * (PUSH_BUDGET_FACTOR if push else 1.0)
+        campaign = CAMPAIGNS[market][0]
+        budget = self.budget(market, ts, faults)
         planned = budget * weight
-        remaining = max(budget - self._spent.get((campaign, ts.date()), 0.0), 0.0)
+        spent = self.spent(market, ts.date())
+        remaining = max(budget - spent, 0.0)
         cpc = BASE_CPC * rng.uniform(1 - CPC_JITTER, 1 + CPC_JITTER)
-        if faults.active(fault_names.AD_PACING_RUNAWAY, ts, market):
-            wanted = max(budget * RUNAWAY_HOURLY_SHARE, planned * RUNAWAY_PLAN_FACTOR) * rng.uniform(
-                1 - PACING_JITTER, 1 + PACING_JITTER
-            )
-        else:
-            wanted = planned * rng.uniform(1 - PACING_JITTER, 1 + PACING_JITTER)
+        jitter = rng.uniform(1 - PACING_JITTER, 1 + PACING_JITTER)
+        wanted = planned * jitter
+        runaway = faults.active(fault_names.AD_PACING_RUNAWAY, ts, market)
+        normal = self._normal_spend.get(market)
+        if normal and normal[0] != ts.date():
+            del self._normal_spend[market]
+            normal = None
+        if runaway or normal:
+            normal_spent = normal[1] if normal else spent
+            normal_spent += round(min(wanted, max(budget - normal_spent, 0.0)), 2)
+            self._normal_spend[market] = (ts.date(), normal_spent)
+        if runaway:
+            wanted = max(budget * RUNAWAY_HOURLY_SHARE, planned * RUNAWAY_PLAN_FACTOR) * jitter
         spend = round(min(wanted, remaining), 2)
-        self._spent[(campaign, ts.date())] = self._spent.get((campaign, ts.date()), 0.0) + spend
+        self._spent[(campaign, ts.date())] = spent + spend
         clicks = spend / cpc
         return {
             "ts": ts,
