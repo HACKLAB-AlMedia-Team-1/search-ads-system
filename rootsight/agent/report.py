@@ -56,6 +56,7 @@ class Report(BaseModel):
     sources: list[str] = Field(default_factory=list)
     summary: str = ""
     failed_check: dict = Field(default_factory=dict)
+    method: str = "rules"  # who found the cause: rules | rules, then the model | model
 
 
 def fmt(value: float | None, unit: str) -> str:
@@ -195,7 +196,8 @@ def failed_check(tb: Toolbox, case: Case, component: str, metric: str) -> dict:
                    f"the alarm fires beyond {Z_ALARM:.0f}."}  # fmt: skip
 
 
-def _best(hypotheses: list[Evidence]) -> Evidence | None:
+def best_hypothesis(hypotheses: list[Evidence]) -> Evidence | None:
+    """The tested cause with the strongest evidence (confirmed first, then most checks passed)."""
     return max(
         hypotheses, key=lambda e: (e.status == SUPPORTED, sum(c["passed"] for c in e.checks)), default=None
     )
@@ -205,7 +207,7 @@ def build_report(tb: Toolbox, case: Case) -> Report:
     """Turn the toolbox state of a finished investigation into a `Report`."""
     if "impact" not in tb.notes:
         tb.call("estimate_impact", {})
-    best = _best(tb.notes["hypotheses"])
+    best = best_hypothesis(tb.notes["hypotheses"])
     summary = best.summary() if best else {"status": "HYPOTHESIS", "cause": "no cause found", "checks": [], "rejected": [], "not_rejected": [], "segment": {}, "metric": case.root_metric}  # fmt: skip
     event = (
         tb.db.df("SELECT component FROM events WHERE event_id = ?", [best.hypothesis.event_id])
@@ -264,6 +266,7 @@ def render(report: Report) -> str:
         f"**Cost so far ({imp['hours']} h):** {'; '.join(cost_parts(imp)) or 'no measurable cost yet'}.",
         f"**Likely cause:** {report.cause}",
         f"**Possible next action:** {report.next_action}",
+        f"**Found by:** {report.method}",
         *([(f"**Failed check:** {report.failed_check['why']} Expected {report.failed_check['expected']}, got "
             f"{report.failed_check['got']}. SQL: `{report.failed_check['sql']}`")] if report.failed_check else []),
         "",

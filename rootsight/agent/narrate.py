@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 NUMBER = re.compile(r"\d[\d,.]*")
 
 
-def _numbers(text: str) -> set[str]:
+def numbers_in(text: str) -> set[str]:
+    """Every number written in a text (commas and trailing dots removed), to check model wording against tool results."""
     return {n.rstrip(".,").replace(",", "") for n in NUMBER.findall(text)}
 
 
@@ -35,7 +36,7 @@ def narrate(report: Report, llm: LLMClient, now: datetime) -> Report:
     except (LLMUnavailable, ValueError, KeyError, TypeError) as exc:
         logger.warning("Plain-language rewrite skipped (%s)", exc)
         return report
-    if not summary or not _numbers(summary + action) <= _numbers(json.dumps(facts, default=str)):
+    if not summary or not numbers_in(summary + action) <= numbers_in(json.dumps(facts, default=str)):
         logger.warning("Plain-language rewrite dropped: it used numbers that are not in the tool results")
         return report
     return report.model_copy(update={"summary": summary, "next_action": action or report.next_action})

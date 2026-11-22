@@ -37,10 +37,10 @@ directly: set `LLM_BASE_URL` and `LLM_API_KEY` in `.env`; the tool then uses `an
 2. **Reading a plain description** (`scenarios`, the *Add a scenario* page): twelve short texts a shop manager could write.
    Nine should map to one of the simulator's faults, three cannot be simulated and must be refused. Half of the texts
    avoid the keywords of the rule-based fallback on purpose.
-3. **Linking a new metric** (`metrics`, the *Add a metric* page): three new metrics. The contender proposes links to
+3. **Linking a new metric** (`metrics`, the *Agent → Add or edit a metric (SQL)* page): three new metrics. The contender proposes links to
    existing metrics; code then checks each link against 7 days of history (validated = correlation of at least 0.6).
 
-4. **Writing a metric's SQL from a plain description** (`sql`, the *Add a metric* page, "describe it in words"): six wishes
+4. **Writing a metric's SQL from a plain description** (`sql`, the *Agent → Add or edit a metric (SQL)* page, "describe it in words"): six wishes
    such as "share of carts that do not become an order". The model writes the SQL (`onboarding.draft_metric`); code runs it
    on 7 days of history and compares the hourly numbers with the SQL a person wrote for the same wish. Only a model can do
    this job: the rules are listed as "not possible".
@@ -140,7 +140,7 @@ Every contender that named a cause also named the right place (country or device
 |---|---|---|
 | Known failure types, an answer at once, no dependency on anything | **Rules** | 9 of 9 confirmed in 0.3 s, free, the same on every run |
 | Understanding what a person wrote (Add a scenario) | **Cloud model** | 12 of 12 against 4 of 12 for keywords |
-| Writing a metric's SQL from words (Add a metric) | **Cloud model**, with the SQL shown to the person | 6 of 6 right; the rules cannot, the local models are right 2 or 3 times in 6 |
+| Writing a metric's SQL from words (Agent → Add or edit a metric (SQL)) | **Cloud model**, with the SQL shown to the person | 6 of 6 right; the rules cannot, the local models are right 2 or 3 times in 6 |
 | Proposing links for a new metric | **Cloud model plus the code validation** | 5 to 6 validated links against 1, but only because code filters out the rest |
 | A failure nobody wrote a recipe for | **A model as the investigator, rules as the fallback** | Opus matched the rules on all nine without a recipe; unscripted failures were not measured |
 | No internet, or data that must not leave the laptop | **qwen3.5:9b** (4b when speed matters more) | 9 of 9 causes locally; weaker on evidence, descriptions and SQL |

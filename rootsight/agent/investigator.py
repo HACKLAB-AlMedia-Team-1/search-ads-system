@@ -1,22 +1,26 @@
-"""The investigator: runs a case through the LLM agent (live/record/replay) or the rule-based policy."""
+"""The investigator: the rule recipe first; when it cannot confirm a cause and a model is configured, the model takes over."""
 
 from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from rootsight.agent import offline_policy
+from rootsight.agent.evidence import SUPPORTED
 from rootsight.agent.llm import LLMClient, LLMUnavailable
 from rootsight.agent.narrate import narrate
-from rootsight.agent.report import Report, build_report
+from rootsight.agent.report import Report, best_hypothesis, build_report
 from rootsight.agent.tools import Step, Toolbox
 from rootsight.config import Settings
 from rootsight.monitor.watcher import Case
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = (Path(__file__).with_name("prompts") / "investigator_system.md").read_text(encoding="utf-8")
+PROMPTS = Path(__file__).with_name("prompts")
+SYSTEM_PROMPT = (PROMPTS / "investigator_system.md").read_text(encoding="utf-8")
+TAKEOVER_PROMPT = (PROMPTS / "takeover.md").read_text(encoding="utf-8")
 
 
 TYPES = {"segment": "object", "scope": "object", "samples": "array", "hours": "integer", "window": "integer", "n": "integer",
@@ -127,13 +131,56 @@ HYPOTHESIS_REMINDER = 4  # tool calls before the limit at which a model without 
 REMINDER = ("You have few tool calls left and have not tested a cause yet. Call record_hypothesis now for the most likely "
             "cause (cause, metric, segment, and the event_id from get_events), then estimate_impact, then finish.")  # fmt: skip
 TOOL_NAMES = frozenset(t["function"]["name"] for t in TOOL_SCHEMAS)
+HYPOTHESIS_TOOL = next(t for t in TOOL_SCHEMAS if t["function"]["name"] == "record_hypothesis")
+LAST_CHANCE = "No tool calls are left except this one: call record_hypothesis for the most likely cause you found."
+RULES, TAKEN_OVER, MODEL = "rules", "rules, then the model", "model"
+MODEL_TRIED = "rules; the model found nothing better"  # the model took over but its causes were not stronger
+
+
+def _arguments(raw: object) -> dict | None:
+    try:
+        args = json.loads(raw or "{}") if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    return args if isinstance(args, dict) else None
+
+
+def tool_loop(llm: LLMClient, tb: Toolbox, messages: list[dict], schemas: list[dict], case_id: str, max_calls: int,
+              stop: str, reminder: tuple[str, Callable[[], bool]] | None = None) -> None:  # fmt: skip
+    """Let the model call tools until it calls `stop`, stops calling tools, or has used `max_calls` turns.
+
+    `reminder` = (text, needed): the text is added once, `HYPOTHESIS_REMINDER` turns before the limit, if `needed()` is true.
+    Unknown tools and bad arguments are answered with an error instead of being run (small models invent tools).
+    """
+    names = frozenset(t["function"]["name"] for t in schemas)
+    for turn in range(max_calls):
+        if reminder and turn == max_calls - HYPOTHESIS_REMINDER and reminder[1]():
+            messages.append({"role": "user", "content": reminder[0]})
+        reply = llm.chat("agent", messages, schemas, case_id, tb.end)
+        messages.append(reply)
+        if not reply.get("tool_calls"):
+            return
+        for call in reply["tool_calls"]:
+            fn, args = call["function"], _arguments(call["function"].get("arguments"))
+            if fn["name"] not in names:
+                result = {"error": f"unknown tool '{fn['name']}'; use one of {sorted(names)}"}
+            elif args is None:
+                result = {"error": "the arguments must be one JSON object"}
+            else:
+                result = tb.call(fn["name"], args, (reply.get("content") or "").strip()[:200])
+            messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, default=str)})
+            if fn["name"] == stop:
+                return
 
 
 class Investigator:
-    """Investigates cases. With a model configured it lets the model pick tools; otherwise (or on failure) it follows rules."""
+    """Investigates cases: the rule recipe first; the model takes over only when the rules cannot confirm a cause.
 
-    def __init__(self, settings: Settings, toolbox: Toolbox, llm: LLMClient):
-        self.settings, self.tb, self.llm = settings, toolbox, llm
+    `rules_first=False` keeps the older order (the model first, the rules if it fails); only the model comparison uses it.
+    """
+
+    def __init__(self, settings: Settings, toolbox: Toolbox, llm: LLMClient, rules_first: bool = True):
+        self.settings, self.tb, self.llm, self.rules_first = settings, toolbox, llm, rules_first
         self.tb.on_step = self._store_step
 
     def _store_step(self, step: Step) -> None:
@@ -151,51 +198,60 @@ class Investigator:
         )
 
     def run(self, case: Case) -> Report:
-        """Investigate one case and return its report."""
+        """Investigate one case and return its report (`report.method` says who found the cause)."""
+        method = self._rules_then_model(case) if self.rules_first else self._model_then_rules(case)
+        report = build_report(self.tb, case)
+        report.method = method
+        return narrate(report, self.llm, self.tb.end)
+
+    def _rules_then_model(self, case: Case) -> str:
+        self.tb.start(case)
+        offline_policy.investigate(self.tb, case)
+        if self._confirmed() or not self.llm.available:
+            return RULES
+        tried = [{"cause": e.hypothesis.cause, "status": e.status, "failed_checks": [c["name"] for c in e.checks if not c["passed"]]}
+                 for e in self.tb.notes["hypotheses"]]  # fmt: skip
+        before, steps = len(self.tb.notes["hypotheses"]), len(self.tb.trail)
+        try:
+            self._run_llm(case, {"rules_tried": tried})
+        except (LLMUnavailable, KeyError, TypeError, ValueError) as exc:  # also a malformed model reply
+            logger.warning("The model could not take over (%s); keeping the rule recipe's result", exc)
+        if len(self.tb.trail) == steps:
+            return RULES
+        best = best_hypothesis(self.tb.notes["hypotheses"])
+        if best not in self.tb.notes["hypotheses"][before:]:
+            return MODEL_TRIED
+        self.tb.call("estimate_impact", {"segment": best.hypothesis.segment}, "cost for the best-supported cause")
+        return TAKEN_OVER
+
+    def _model_then_rules(self, case: Case) -> str:
         self.tb.start(case)
         if self.llm.available:
             try:
                 self._run_llm(case)
-            except (LLMUnavailable, KeyError, TypeError, ValueError) as exc:  # also a malformed model reply
+                return MODEL
+            except (LLMUnavailable, KeyError, TypeError, ValueError) as exc:
                 logger.warning("Model unavailable (%s); using the rule-based investigator", exc)
                 self.tb.start(case)
-                offline_policy.investigate(self.tb, case)
-        else:
-            offline_policy.investigate(self.tb, case)
-        return narrate(build_report(self.tb, case), self.llm, self.tb.end)
+        offline_policy.investigate(self.tb, case)
+        return RULES
 
-    def _run_llm(self, case: Case) -> None:
+    def _confirmed(self) -> bool:
+        return any(e.status == SUPPORTED for e in self.tb.notes["hypotheses"])
+
+    def _run_llm(self, case: Case, takeover: dict | None = None) -> None:
+        """The model drives the tools. With `takeover` it continues after the rule recipe and is told what the rules tried."""
         brief = {"case_id": case.case_id, "hour": case.ts.isoformat(), "headline": case.headline, "root_metric": case.root_metric,
                  "segment": case.segment, "onset": case.onset.isoformat(),
-                 "anomalies": [{"metric": a.metric, "segment": a.segment, "z": round(a.z, 1)} for a in case.anomalies[:8]]}  # fmt: skip
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(brief)},
-        ]
-        for turn in range(self.settings.max_tool_calls):
-            if turn == self.settings.max_tool_calls - HYPOTHESIS_REMINDER and not self.tb.notes["hypotheses"]:
-                # smaller models keep exploring; without a tested hypothesis there is no finding at all
-                messages.append({"role": "user", "content": REMINDER})
-            reply = self.llm.chat("agent", messages, TOOL_SCHEMAS, case.case_id, self.tb.end)
-            messages.append(reply)
-            if not reply.get("tool_calls"):
-                break
-            for call in reply["tool_calls"]:
-                fn = call["function"]
-                try:
-                    args = json.loads(fn["arguments"] or "{}") if isinstance(fn["arguments"], str) else fn["arguments"]
-                except ValueError:
-                    args = None
-                if fn["name"] not in TOOL_NAMES:  # small models invent tools; say so instead of running anything
-                    result = {"error": f"unknown tool '{fn['name']}'; use one of {sorted(TOOL_NAMES)}"}
-                elif not isinstance(args, dict):
-                    result = {"error": "the arguments must be one JSON object"}
-                else:
-                    result = self.tb.call(fn["name"], args, (reply.get("content") or "").strip()[:200])
-                messages.append(
-                    {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, default=str)}
-                )
-                if fn["name"] == "finish":
-                    return
-        if not self.tb.notes["hypotheses"]:
+                 "anomalies": [{"metric": a.metric, "segment": a.segment, "z": round(a.z, 1)} for a in case.anomalies[:8]],
+                 **(takeover or {})}  # fmt: skip
+        system = SYSTEM_PROMPT + ("\n\n" + TAKEOVER_PROMPT if takeover else "")
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(brief, default=str)}]
+        before = len(self.tb.notes["hypotheses"])
+        tool_loop(self.llm, self.tb, messages, TOOL_SCHEMAS, case.case_id, self.settings.max_tool_calls, "finish",
+                  (REMINDER, lambda: len(self.tb.notes["hypotheses"]) == before))  # fmt: skip
+        if len(self.tb.notes["hypotheses"]) == before:  # one last turn in which testing a cause is the only choice
+            messages.append({"role": "user", "content": LAST_CHANCE})
+            tool_loop(self.llm, self.tb, messages, [HYPOTHESIS_TOOL], case.case_id, 1, "record_hypothesis")
+        if len(self.tb.notes["hypotheses"]) == before:
             raise LLMUnavailable("the model did not test any hypothesis")

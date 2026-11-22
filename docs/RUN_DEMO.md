@@ -152,7 +152,7 @@ Tips:
 | **Control room** | Live all the time, also when no simulation runs: the key numbers against what is expected (green / amber / red), a chart with the expected range, alerts and the latest finding. Filter by country. It has the *Clock speed* choice too. |
 | **Incidents** | One row per problem. Pick one to read the full report or download it. |
 | **Metric graph** | Pick a metric to see what feeds into it. Red = unusual right now. |
-| **Add or edit a metric** | Both tabs have the same three fields: name, description, SQL. With a language model switched on (`LLM_MODE=live`) you can also describe the metric in words and let the model write the SQL; it is run on 7 days of history and put into the form for you to read first (a statement can run and still be wrong). *Add a metric*: type them (for example name `no_click_search_rate`, SQL `(SUM(searches) - SUM(searches_with_click)) / NULLIF(SUM(searches), 0) FROM fact_hourly`), press **Place it in the graph**. The system proposes the links and checks them on history; weak links are marked "Needs a human look". *Edit a metric*: the name is a dropdown of every metric (built-in too); change its description or SQL, press **Save the change**. The SQL is run on 7 days of history, the metric's links are re-checked, and the change is written to `rootsight/graph/metrics.yaml` (built-in) or `data/metrics_custom.yaml` (added). |
+| **Agent** | One agent, rules first. *Ask why*: type a question ("Why do searches find nothing in Germany?"); the agent finds the number, scores it, and if it is unusual investigates it (rule recipe first; the model takes over only if the recipe cannot confirm a cause). The report says who found the cause. *Watch something*: type what to keep an eye on ("Zero results in Germany on Android"), press **Plan it**: words that name a metric become a **rule** (scored every hour, no model); anything else becomes a **model** watch (the model looks every 6 simulated hours; without a model it waits). You can switch the plan before **Start watching**. *Watch list*: every watch and how it stands now. *Add or edit a metric (SQL)*: the old metric page: name, description, SQL (example: `no_click_search_rate`, `(SUM(searches) - SUM(searches_with_click)) / NULLIF(SUM(searches), 0) FROM fact_hourly`); links are checked on history, weak ones marked "Needs a human look"; a new metric is put on the watch list; edits are written to `rootsight/graph/metrics.yaml` (built-in) or `data/metrics_custom.yaml` (added). |
 | **Add a scenario** | Write the title, an id, what breaks, where, and what a shopper sees; press **Let the agent check it**. The agent picks the matching failure the simulator can produce and writes what the numbers will do and what the agent should do. **Save the scenario** writes `scenarios/<ID>.yaml`; it appears on *All scenarios → Your scenarios*. If no simulator failure matches (or the country/device is not possible), you get the reason instead. |
 
 In the store you can also switch the country (top left), the device (Web / Android app / iOS app) and light/dark mode (moon button).
@@ -211,7 +211,10 @@ python scripts/compare_models.py --only opus sonnet
 ```
 
 Needs the local models in `models/ollama` and, for `opus` / `sonnet`, a logged-in Devin CLI (`SETUP.md`, Step 4). Close the app first. Each run shows a live progress line and writes `docs/model_comparison_results.md`; what the numbers mean is in `docs/MODEL_COMPARISON.md`.
-On *Add or edit a metric*, "Or describe it in words and let the model write the SQL" works only with `LLM_MODE=live`.
+On *Agent → Add or edit a metric (SQL)*, "Or describe it in words and let the model write the SQL" works only with `LLM_MODE=live`.
+
+To see the agent's model paths (planning a watch, a model watch during a failure, a takeover) without the app:
+`python scripts/try_agent.py --local qwen3.5:9b` (free, local), or `python scripts/try_agent.py` with the model in `.env` (e.g. `LLM_BASE_URL=devin-cli`, `opus`; uses Devin credits).
 
 ---
 

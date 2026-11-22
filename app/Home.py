@@ -16,10 +16,10 @@ st.navigation(
             st.Page(VIEWS / "scenarios.py", title="All scenarios", icon=":material/science:"),
         ],
         "Monitoring": [
+            st.Page(VIEWS / "agent.py", title="Agent", icon=":material/smart_toy:"),
             st.Page(VIEWS / "control_room.py", title="Control room", icon=":material/monitoring:"),
             st.Page(VIEWS / "incidents.py", title="Incidents", icon=":material/report:"),
             st.Page(VIEWS / "graph.py", title="Metric graph", icon=":material/hub:"),
-            st.Page(VIEWS / "add_metric.py", title="Add or edit a metric", icon=":material/add_chart:"),
             st.Page(VIEWS / "add_scenario.py", title="Add a scenario", icon=":material/add_task:"),
         ],
     }

@@ -84,3 +84,8 @@ CREATE TABLE IF NOT EXISTS ux_events (
     ts TIMESTAMP, session_id VARCHAR, market VARCHAR, platform VARCHAR, event VARCHAR,
     query VARCHAR, position INTEGER, value DOUBLE
 );
+
+CREATE TABLE IF NOT EXISTS watches (
+    watch_id VARCHAR, created TIMESTAMP, request VARCHAR, kind VARCHAR, metric VARCHAR, segment_json VARCHAR,
+    every_hours INTEGER, reason VARCHAR, active BOOLEAN, last_check TIMESTAMP, last_verdict VARCHAR, last_note VARCHAR
+);

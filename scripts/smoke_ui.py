@@ -10,7 +10,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "app")]
 
 from streamlit.testing.v1 import AppTest
 
-VIEWS = ("journey", "scenarios", "control_room", "incidents", "graph", "add_metric", "add_scenario")
+VIEWS = ("journey", "scenarios", "control_room", "incidents", "graph", "agent", "add_scenario")
 
 
 def main() -> int:

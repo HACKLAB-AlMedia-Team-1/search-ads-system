@@ -25,6 +25,9 @@ STATUS_BADGE = {
     "LIKELY": ("warn", "Likely cause"),
     "HYPOTHESIS": ("bad", "Unconfirmed"),
 }
+FOUND_BY = {"rules": "the rule recipe (no model needed)", "rules, then the model": "the rule recipe, then the model "
+            "(the rules could not confirm a cause)", "model": "the model",
+            "rules; the model found nothing better": "the rule recipe (the model took over but found no stronger cause)"}  # fmt: skip
 FORMATS = {
     "eur": "€{:,.0f}",
     "share": "{:.1%}",
@@ -158,7 +161,8 @@ def report_card(report: dict, state: str | None = None) -> None:
         f"<i>Since</i><span>{report['onset'].replace('T', ' ')}</span>"
         f"<i>Cost so far ({imp['hours']} h)</i><span>{html.escape(' · '.join(cost_parts(imp)) or 'no measurable cost yet')}</span>"
         f"{failed_check_rows(report.get('failed_check'))}"
-        f"<i>Possible next action</i><span>{html.escape(report['next_action'])}</span></div></div>",
+        f"<i>Possible next action</i><span>{html.escape(report['next_action'])}</span>"
+        f"<i>Found by</i><span>{html.escape(FOUND_BY.get(report.get('method', 'rules'), report.get('method', '')))}</span></div></div>",
         unsafe_allow_html=True,
     )
     checks = "".join(

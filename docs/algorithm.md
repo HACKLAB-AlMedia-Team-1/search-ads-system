@@ -1,7 +1,16 @@
 # How RootSight decides (algorithm)
 
-RootSight runs one loop per simulated hour: **simulate -> score -> group -> investigate -> track**.
-Statistics and the evidence checklist are code. A language model is optional and only chooses which tool to call next.
+RootSight is one agent that runs one loop per simulated hour: **simulate -> score -> group -> investigate -> track**.
+Its rule is **rules first, the model only where rules cannot**:
+
+| Job | Rules (always on, no model) | Model (only when rules cannot) |
+|---|---|---|
+| Watch | every metric of the graph, scored every hour by statistics; a watch someone asks for becomes a rule when a metric can express it | a watch no metric can express (it needs reading or judging): the model looks every 6 simulated hours |
+| Find the cause | the fixed recipe walks the graph and the 4-point evidence checklist decides | takes over when the recipe cannot confirm a cause, and continues the same trail |
+| Read plain words | phrases that name a metric, country or device | picks a metric, writes a metric's SQL, or says it needs judgement |
+
+Code checks everything a model produces before it counts: the evidence checklist, every number against the tool results,
+every metric and segment it names, and any SQL it writes (run on history and shown to the person).
 
 In the dashboard this loop runs all the time: one simulated hour every 1-3 real seconds, from the moment the dashboard loads. It never pauses.
 Actions of a real person in the ShopLens store are added to the organic numbers of the hour being simulated, for that country and device.
@@ -16,6 +25,7 @@ The simulated night (01:00-06:59) is passed without waiting, and a failure start
 - A rotating batch of about 40 other (metric, segment) pairs per tick. Segments are market, platform and source, singly or in pairs.
 - Anything that was unusual last tick is scored again (a "watch list").
 - A newly added metric is pinned and scored on every tick.
+- A rule watch someone asked for on the *Agent* page (a metric in a segment) is pinned and scored on every tick.
 
 ## 2. What is normal
 
@@ -44,9 +54,12 @@ The simulated night (01:00-06:59) is passed without waiting, and a failure start
 6. `record_hypothesis` runs the evidence checklist.
 7. `estimate_impact`, `finish`. The report is assembled in code from tool results; the model never writes a number.
 
-This order is the rule-based recipe (`agent/offline_policy.py`), which is what runs by default. With a language model
-switched on, the model chooses the next tool itself from the same tools and the same limit of 12 calls; a model that has
-not tested a cause four calls before the limit is reminded to, and if it fails the recipe finishes the job.
+This order is the rule recipe (`agent/offline_policy.py`), and it always runs first. If it confirms a cause (SUPPORTED),
+the investigation ends there and no model is called. If it does not and a model is switched on, the model **takes over**
+(`Investigator._rules_then_model`): it gets the case, the causes the recipe tested and the checks that failed, and calls
+the same tools (fresh limit of 12 calls, prompt `agent/prompts/takeover.md`). Its hypotheses go through the same checklist;
+the report keeps the best-supported cause and says who found it (`method`: rules, or rules then the model). If the model
+fails or tests nothing, the recipe's result stands. A model that has not tested a cause four calls before the limit is reminded to.
 
 ## 5. When the evidence is sufficient (computed in `agent/evidence.py`)
 
@@ -71,7 +84,28 @@ Monitoring keeps running, the agent sees the numbers recover and closes it after
 The same cause coming back within 24 hours normally reopens the incident. A fixed incident is the exception: it is never reopened, so the same
 cause coming back later is a new incident with a fresh report (`IncidentManager.fixed`).
 
-## 7. Adding a metric
+## 7. Watches and questions (the *Agent* page)
+
+**Watch something.** A plain request ("zero results in Germany on Android") is planned rules first (`agent/watches.py`):
+1. Phrases that name a metric (`PHRASES`, or the metric's own name) plus country and device words -> a **rule watch**: that
+   metric in that segment is pinned and scored every hour by the statistics above (no model).
+2. No metric named and a model is on -> the model decides: an existing metric (validated: it must exist, the segment must
+   exist) -> rule watch; a new metric -> it writes the SQL, which is run on 7 days and shown before it is added; it needs
+   judgement -> a **model watch**.
+3. No model -> the model watch is saved and waits for one.
+
+The person sees the plan first and can switch it (a rule to the model, or the model to a rule when the words name a metric).
+A model watch looks every 6 simulated daytime hours with the read-only tools and ends with `verdict` (ok or problem).
+Code checks the verdict: a problem must name an existing metric and a valid segment, and its sentence may only use numbers
+from the tool results (otherwise the sentence is dropped). A checked problem becomes a case and goes through the normal
+investigation (rules first) and incident flow. Watches live in the `watches` table, so *Reset demo* clears them.
+
+**Ask why.** "Why do searches find nothing in Germany?" -> the number and segment (plain words first, the model if no
+metric is named) -> its score for the latest closed hour. If it and everything upstream of it is normal, the answer says
+so with the numbers. Otherwise (or when asked to investigate anyway) a case is built from the unusual metrics and
+investigated exactly like a watcher case.
+
+## 8. Adding a metric
 
 `{name, description, sql}` -> parse with sqlglot -> propose edges (shared columns; the fast model if configured) -> validate in code
 (the SQL must run on history, dimensions must exist, a correlation edge needs |r| >= 0.6 over 7 days at lags 0-2 hours, otherwise it is kept
@@ -79,11 +113,12 @@ with half the confidence and flagged AMBIGUOUS) -> write to `metric_registry` an
 With a model, the SQL itself can be written from a plain description (`draft_metric`): the statement is run on 7 days of
 history and shown to the person, who decides. It is never added unseen, because a statement can run and still be wrong.
 
-## 8. Rules or a language model
+## 9. Rules or a language model
 
 Measured on 22 Nov 2026 (`docs/MODEL_COMPARISON.md`, one run per scenario): the rule recipe finds and confirms all nine
 known failures in 0.3 s; Claude Opus also confirms all nine without a recipe (38 s); two local models (Qwen 3.5, 4B and 9B)
 find eight and nine but confirm only six and seven. Reading a person's description: keywords 4 of 12, local models 10,
 cloud models 12. Writing SQL from words: rules cannot, local models right 2-3 of 6, cloud models 6 of 6.
 So: rules where the failure is known and speed matters, a model for language and for cases no recipe covers, and code for
-every number and every check either of them produces.
+every number and every check either of them produces. That is how the agent is built (section 0): with the nine known
+failures the rules confirm every cause, so the model is never called and the results are the same with or without it.

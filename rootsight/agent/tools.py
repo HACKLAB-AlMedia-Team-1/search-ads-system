@@ -419,6 +419,11 @@ class Toolbox:
         self.notes["impact"] = result
         return result
 
+    def verdict(self, status: str, reason: str = "", metric: str | None = None, segment: dict | None = None) -> dict:
+        """A model watch's conclusion for this look (ok or problem); it is checked in code before it counts."""
+        self.notes["verdict"] = {"status": status, "reason": reason, "metric": metric, "segment": segment or {}}
+        return {"recorded": True}
+
     def finish(self, summary: str = "") -> dict:
         """End the investigation; the report is assembled in code from the recorded results."""
         self.notes["summary"] = summary

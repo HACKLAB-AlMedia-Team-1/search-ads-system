@@ -180,6 +180,15 @@ class Watcher:
             ),
         ]
 
+    def pin_segment(self, metric: str, segment: dict[str, str]) -> None:
+        """Score one metric in one segment on every tick (a rule watch someone asked for)."""
+        if (metric, segment) not in self._pinned:
+            self._pinned.append((metric, dict(segment)))
+
+    def is_bad(self, metric: str, z: float) -> bool:
+        """Is a move in the direction of z harmful for this metric (e.g. orders up is not a failure)?"""
+        return self._is_bad(metric, z)
+
     def _targets(self) -> list[tuple[str, dict[str, str]]]:
         targets = {
             _key(m, s): (m, s)
@@ -342,7 +351,7 @@ class Watcher:
             + self._planned_notices(hour, entries)
             + self._delay_notices(hour, incomplete)
         )
-        self._persist(hour, result)
+        self.persist(hour, result)
         return result
 
     def _group(self, hour: datetime, anomalies: list[Anomaly], kind: str) -> list[Case]:
@@ -411,7 +420,8 @@ class Watcher:
                 notices.append(case)
         return notices
 
-    def _persist(self, hour: datetime, cases: list[Case]) -> None:
+    def persist(self, hour: datetime, cases: list[Case]) -> None:
+        """Store cases and their anomalies (also used for cases raised by a model watch or a question)."""
         anomaly_rows, case_rows = [], []
         for case in cases:
             case_rows.append({"case_id": case.case_id, "ts": case.ts, "kind": case.kind, "status": "open",

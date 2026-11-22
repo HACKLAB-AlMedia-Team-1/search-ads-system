@@ -279,7 +279,7 @@ def first_case(pipeline: Pipeline, scenario) -> tuple | None:
 
 def investigate(contender: Contender, pipeline: Pipeline, case, scenario, bar: tqdm) -> dict:
     """One investigation of one case by one contender, with everything worth comparing."""
-    investigator = Investigator(contender.settings, pipeline.toolbox, contender.client())
+    investigator = Investigator(contender.settings, pipeline.toolbox, contender.client(), rules_first=False)
     store, model_drove = pipeline.toolbox.on_step, {"ok": contender.kind == "rules", "why": ""}
 
     model_tools: list[str] = []
